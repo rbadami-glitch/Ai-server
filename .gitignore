@@ -1,0 +1,20 @@
+# Runtime data and credentials must stay on the AI server, outside Git.
+CW-GPU-Dashboard-History/
+KeepAlive-Backups/
+Model-Test-*.jsonl
+*.jsonl
+*.sqlite*
+*.db
+*.db-*
+*.log
+*.key
+*.pem
+*.pfx
+.env
+.env.*
+*.bak-*
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.tmp/
