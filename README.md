@@ -5,7 +5,21 @@ This folder is for **source code only**. Its local Git `origin` is the approved 
 | Source file | Purpose |
 | --- | --- |
 | `GPU usage/CW-GPU-Dashboard.py` | Local-only GPU/Ollama dashboard on `127.0.0.1:8791`; live status every 3 seconds, a GPU history sample every minute, custom minute/hour graph range, selected day, and last 7 days. |
-| `OpenWebUi Monitor/OpenWebUI-Feedback-Dashboard.py` | Separate Open WebUI feedback dashboard; review its database path, permissions, and access configuration before deployment. |
+| `OpenWebUi Monitor/OpenWebUI-Feedback-Dashboard.py` | Local-only Open WebUI feedback dashboard on `127.0.0.1:8789`, with a separate chat-usage page. Review its database path, permissions, and access configuration before deployment. |
+
+## Open WebUI feedback and chat usage
+
+The feedback dashboard reads Open WebUI's SQLite database in read-only mode. It prints a fresh local access-key URL when started; keep that URL private. The **Chat usage** link opens a separate `/usage` page with the same custom minutes/hours, selected-day, and last-seven-days controls as the GPU dashboard. It refreshes every 15 seconds and reads saved `chat_message` rows; it does not create seven new history files because the database already contains the dated records.
+
+"Chat prompts" counts saved `user` messages and "assistant responses" counts saved `assistant` messages. These are **not** all HTTP/API requests to Open WebUI. Token figures come only from assistant messages with usable saved `usage` fields. The page shows coverage so missing token counts are not misrepresented as zero. It shows time, user, model, and token counts for recent activity, but no chat text. The database may retain more than seven days; the page intentionally limits its date selector to the last seven days.
+
+Run it on the AI server after confirming the database path, using a separate PowerShell window from the GPU dashboard:
+
+```powershell
+python -B 'E:\AI\ollama\OpenWebUI-Monitoring\github\OpenWebUi Monitor\OpenWebUI-Feedback-Dashboard.py' --db 'C:\downloads\open-webui\data\webui.db'
+```
+
+If the actual `webui.db` is elsewhere, pass that exact path to `--db`. The script does not restart Open WebUI or change its database. The new Git commit must be pulled on the AI server and this Python process restarted before its new page appears. Offline tests use a synthetic database: `python -B -m unittest discover -s tests -p 'test_*.py'`.
 
 ## Where GPU history lives
 

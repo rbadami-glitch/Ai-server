@@ -14,9 +14,9 @@ import secrets
 import sqlite3
 import sys
 import webbrowser
-from collections import Counter
+from collections import Counter, defaultdict
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -306,6 +306,199 @@ def read_detail(path, feedback_id):
         }
 
 
+def usage_window(view, amount=None, selected_day=None, now=None):
+    """Use the same last-N/day/week limits as the GPU dashboard."""
+    now = now or datetime.now().astimezone()
+    if now.tzinfo is None:
+        raise ValueError("Current time must include a timezone.")
+    today = now.date()
+    oldest = today - timedelta(days=6)
+    if view in ("minutes", "hours"):
+        limit = 10080 if view == "minutes" else 168
+        if not isinstance(amount, int) or not 1 <= amount <= limit:
+            raise ValueError(f"{view.title()} must be between 1 and {limit}.")
+        start = now - timedelta(**{view: amount})
+        end = now
+    elif view == "day":
+        try:
+            chosen = date.fromisoformat(selected_day)
+        except (TypeError, ValueError) as error:
+            raise ValueError("Choose a date in the last seven days.") from error
+        if not oldest <= chosen <= today:
+            raise ValueError("Choose a date in the last seven days.")
+        start = datetime.combine(chosen, time.min).astimezone()
+        end = datetime.combine(chosen + timedelta(days=1), time.min).astimezone()
+    elif view == "week":
+        start = datetime.combine(oldest, time.min).astimezone()
+        end = now
+    else:
+        raise ValueError("View must be minutes, hours, day, or week.")
+    return start, end, oldest, today
+
+
+def token_counts(raw):
+    """Only count explicit numeric token fields; missing usage stays unknown."""
+    usage = parse_json(raw)
+    if not isinstance(usage, dict):
+        return None
+
+    def count(*names):
+        for name in names:
+            value = usage.get(name)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)) and value >= 0 and int(value) == value:
+                return int(value)
+        return None
+
+    prompt = count("prompt_tokens", "input_tokens", "prompt_eval_count")
+    completion = count("completion_tokens", "output_tokens", "eval_count")
+    total = count("total_tokens")
+    if prompt is None and completion is None and total is None:
+        return None
+    if total is None and prompt is not None and completion is not None:
+        total = prompt + completion
+    return {"prompt": prompt, "completion": completion, "total": total}
+
+
+def read_usage(path, view="hours", amount=2, selected_day=None, now=None):
+    start, end, oldest, today = usage_window(view, amount, selected_day, now)
+    start_epoch, end_epoch = int(start.timestamp()), int(end.timestamp())
+    with closing(db_connection(path)) as db:
+        columns = table_columns(db, "chat_message")
+        required = {"id", "chat_id", "user_id", "role", "created_at", "usage", "model_id"}
+        if not required <= columns:
+            raise RuntimeError("This Open WebUI database has no supported chat_message usage fields.")
+        names = {}
+        if {"id", "name"} <= table_columns(db, "user"):
+            names = {str(row["id"]): str(row["name"] or row["id"])
+                     for row in db.execute('SELECT id, name FROM "user"')}
+        models = {}
+        if {"id", "name"} <= table_columns(db, "model"):
+            models = {str(row["id"]): str(row["name"] or row["id"])
+                      for row in db.execute("SELECT id, name FROM model")}
+        rows = db.execute(
+            "SELECT id, chat_id, user_id, role, created_at, model_id, usage "
+            "FROM chat_message WHERE role IN ('user', 'assistant') AND "
+            "((created_at >= ? AND created_at < ?) OR "
+            "(created_at >= ? AND created_at < ?)) ORDER BY created_at DESC",
+            (start_epoch, end_epoch, start_epoch * 1000, end_epoch * 1000),
+        )
+        events = []
+        for row in rows:
+            timestamp = epoch(row["created_at"])
+            if not start_epoch <= timestamp < end_epoch:
+                continue
+            role = row["role"]
+            tokens = token_counts(row["usage"]) if role == "assistant" else None
+            events.append({"at": timestamp, "role": role,
+                           "chat_id": str(row["chat_id"] or ""),
+                           "user_id": str(row["user_id"] or ""),
+                           "model_id": str(row["model_id"] or ""),
+                           "tokens": tokens})
+
+    events.sort(key=lambda event: event["at"], reverse=True)
+
+    totals = {"prompts": 0, "responses": 0, "token_responses": 0,
+              "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+              "total_token_responses": 0}
+    users, chats = set(), set()
+    by_model = defaultdict(lambda: {"responses": 0, "token_responses": 0,
+                                    "total_tokens": 0})
+    recent = []
+    # A bounded number of chart points keeps the page useful for any allowed range.
+    duration = (end - start).total_seconds()
+    bucket_seconds = max(60, int((duration / 72 + 59) // 60) * 60)
+    buckets = {}
+    for event in events:
+        at, role = event["at"], event["role"]
+        if event["user_id"]:
+            users.add(event["user_id"])
+        if event["chat_id"]:
+            chats.add(event["chat_id"])
+        bucket_at = start_epoch + ((at - start_epoch) // bucket_seconds) * bucket_seconds
+        bucket = buckets.setdefault(bucket_at, {"at": bucket_at, "prompts": 0,
+                                                "responses": 0, "tokens": 0})
+        if role == "user":
+            totals["prompts"] += 1
+            bucket["prompts"] += 1
+        else:
+            totals["responses"] += 1
+            bucket["responses"] += 1
+            model = by_model[event["model_id"] or "Unknown model"]
+            model["responses"] += 1
+            token_data = event["tokens"]
+            if token_data is not None:
+                totals["token_responses"] += 1
+                model["token_responses"] += 1
+                for key in ("prompt", "completion", "total"):
+                    if token_data[key] is not None:
+                        totals[f"{key}_tokens"] += token_data[key]
+                if token_data["total"] is not None:
+                    totals["total_token_responses"] += 1
+                    model["total_tokens"] += token_data["total"]
+                    bucket["tokens"] += token_data["total"]
+        if len(recent) < 100:
+            recent.append({"at": at, "role": role,
+                           "user": names.get(event["user_id"], event["user_id"] or "Unknown"),
+                           "model": models.get(event["model_id"], event["model_id"] or "—"),
+                           "tokens": event["tokens"]["total"] if event["tokens"] else None})
+
+    model_rows = [{"model": models.get(model_id, model_id), **values}
+                  for model_id, values in by_model.items()]
+    model_rows.sort(key=lambda row: (-row["responses"], row["model"]))
+    for bucket_at in range(start_epoch, end_epoch, bucket_seconds):
+        buckets.setdefault(bucket_at, {"at": bucket_at, "prompts": 0,
+                                       "responses": 0, "tokens": 0})
+    return {"view": view, "start": start.isoformat(), "end": end.isoformat(),
+            "oldest_day": oldest.isoformat(), "today": today.isoformat(),
+            "totals": {**totals, "active_users": len(users), "active_chats": len(chats)},
+            "buckets": sorted(buckets.values(), key=lambda item: item["at"]),
+            "models": model_rows, "recent": recent,
+            "note": "Saved chat prompts, not all HTTP/API requests. Token totals include only assistant responses with recorded usage."}
+
+
+USAGE_HTML = r'''<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Open WebUI Chat Usage</title><style>
+:root{font-family:Inter,"Segoe UI",Arial,sans-serif;color:#e7eef5;background:#0b111a;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:#0b111a}main{max-width:1450px;margin:auto;padding:30px 28px 60px}
+a{color:#77e8c7}h1{font-size:30px;margin:8px 0}h2{font-size:17px;margin:0 0 12px}.muted{color:#9bb0bf;font-size:13px;line-height:1.5}
+.top{display:flex;justify-content:space-between;gap:15px;align-items:start}.links{display:flex;gap:20px;padding-top:12px}
+.controls{display:flex;align-items:end;gap:12px;flex-wrap:wrap;margin:24px 0}.controls label{display:grid;gap:6px;color:#a9bfca;font-size:12px;font-weight:700}
+[hidden]{display:none!important}
+select,input,button{font:inherit;color:#e7eef5;background:#112432;border:1px solid #365260;border-radius:8px;padding:9px 11px;min-height:39px}
+input[type=number]{width:95px}button{cursor:pointer}a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #70e3c1;outline-offset:2px}
+.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px}.card,.panel{background:#12202d;border:1px solid #2a4350;border-radius:13px;padding:19px}
+.label{color:#a5b9c5;font-size:12px}.value{font-size:29px;font-weight:750;margin-top:10px}.hint{font-size:11px;color:#92abb8;margin-top:7px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}.panel{margin-top:14px}.grid .panel{margin-top:0}
+.chart{height:205px;display:flex;align-items:end;gap:2px;border-bottom:1px solid #4a6270;margin-top:14px;overflow:hidden}
+.bar{flex:1;min-width:2px;background:#55dcb7;border-radius:3px 3px 0 0}.tokens .bar{background:#70aef1}.axis{display:flex;justify-content:space-between;color:#93aab8;font-size:11px;margin-top:8px}
+.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;text-align:left}th,td{padding:11px 10px;border-bottom:1px solid #2a4050;font-size:12px}th{color:#a4b8c4}td{color:#d6e4e9}
+.notice{border-left:3px solid #70aef1;padding:11px 13px;background:#172735;margin:15px 0;color:#b5c8d4;font-size:12px;line-height:1.5}
+@media(max-width:950px){.cards{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}}@media(max-width:520px){main{padding:20px 13px}.cards{grid-template-columns:1fr 1fr}.value{font-size:22px}.top{display:block}}
+</style></head><body><main>
+<div class="top"><div><div class="muted">Open WebUI · Monitoring</div><h1>Chat usage</h1><div class="muted">Saved chat activity and recorded token usage, refreshed every 15 seconds.</div></div><div class="links"><a id="feedback-link" href="#">Feedback overview</a></div></div>
+<div class="notice">These are saved chat messages, not a count of all HTTP/API requests to Open WebUI. Token totals are incomplete whenever a response has no saved usage data. No message text is shown here.</div>
+<div class="controls"><label>Range<select id="mode"><option value="range">Last N minutes or hours</option><option value="day">Selected day</option><option value="week">Last 7 days</option></select></label><label id="amount-box">Amount<input id="amount" type="number" min="1" max="168" value="2"></label><label id="unit-box">Unit<select id="unit"><option value="hours">Hours</option><option value="minutes">Minutes</option></select></label><label id="day-box" hidden>Day<input id="day" type="date"></label><button id="refresh">Refresh</button><span id="updated" class="muted">Loading…</span></div>
+<div class="cards"><div class="card"><div class="label">Chat prompts</div><div class="value" id="prompts">—</div><div class="hint">Saved user messages; not HTTP requests</div></div><div class="card"><div class="label">Assistant responses</div><div class="value" id="responses">—</div><div class="hint">Saved assistant messages</div></div><div class="card"><div class="label">Active users / chats</div><div class="value" id="active">—</div><div class="hint">Distinct IDs in selected period</div></div><div class="card"><div class="label">Recorded total tokens</div><div class="value" id="tokens">—</div><div class="hint" id="coverage">Only responses with saved counts</div></div></div>
+<div class="grid"><section class="panel"><h2>Chat prompts over time</h2><div class="muted">Vertical axis: saved user-message count per time bucket.</div><div class="chart" id="prompt-chart" role="img" aria-label="Saved chat prompts over time"></div><div class="axis"><span id="prompt-start">—</span><span id="prompt-scale">—</span><span id="prompt-end">—</span></div></section><section class="panel tokens"><h2>Recorded tokens over time</h2><div class="muted">Vertical axis: recorded total tokens per time bucket; missing counts are excluded.</div><div class="chart" id="token-chart" role="img" aria-label="Recorded tokens over time"></div><div class="axis"><span id="token-start">—</span><span id="token-scale">—</span><span id="token-end">—</span></div></section></div>
+<div class="grid"><section class="panel"><h2>Token detail</h2><div class="cards" style="grid-template-columns:repeat(2,1fr)"><div><div class="label">Prompt tokens</div><div class="value" id="prompt-tokens">—</div></div><div><div class="label">Completion tokens</div><div class="value" id="completion-tokens">—</div></div></div><p class="muted" id="token-note"></p></section><section class="panel"><h2>Responses by model</h2><div class="table-wrap"><table><thead><tr><th>Model</th><th>Responses</th><th>With usage</th><th>Recorded tokens</th></tr></thead><tbody id="models"></tbody></table></div></section></div>
+<section class="panel"><h2>Recent saved chat activity</h2><p class="muted">Newest 100 messages in the selected period. No prompt or answer text is loaded.</p><div class="table-wrap"><table><thead><tr><th>Time</th><th>Type</th><th>User</th><th>Model</th><th>Recorded total tokens</th></tr></thead><tbody id="recent"></tbody></table></div></section>
+</main><script>
+const key=new URLSearchParams(location.search).get('key')||'';
+const $=id=>document.getElementById(id),fmt=n=>Number(n).toLocaleString(),stamp=n=>new Date(n*1000).toLocaleString();
+const node=(tag,value)=>{const item=document.createElement(tag);item.textContent=value;return item};
+$('feedback-link').href='/?key='+encodeURIComponent(key);
+function controls(){const mode=$('mode').value,range=mode==='range';$('amount-box').hidden=!range;$('unit-box').hidden=!range;$('day-box').hidden=mode!=='day';$('amount').max=$('unit').value==='minutes'?10080:168;if(+$('amount').value>+$('amount').max)$('amount').value=$('amount').max}
+function draw(rootId,points,field,start,end,scaleId,startId,endId){const root=$(rootId);root.replaceChildren();const max=Math.max(1,...points.map(x=>x[field]));for(const item of points){const bar=node('div','');bar.className='bar';bar.style.height=(item[field]===0?0:Math.max(2,item[field]/max*195))+'px';bar.title=stamp(item.at)+' · '+fmt(item[field]);root.append(bar)}$(scaleId).textContent='Peak '+fmt(max)+' / bucket';$(startId).textContent=new Date(start).toLocaleString();$(endId).textContent=new Date(end).toLocaleString()}
+function rows(rootId,items,columns){const root=$(rootId);root.replaceChildren();if(!items.length){const row=node('tr',''),cell=node('td','No saved activity in this period.');cell.colSpan=columns.length;row.append(cell);root.append(row);return}for(const item of items){const row=node('tr','');for(const column of columns)row.append(node('td',column(item)));root.append(row)}}
+let busy=false;
+async function load(){if(busy)return;busy=true;try{const params=new URLSearchParams(),mode=$('mode').value;params.set('view',mode==='range'?$('unit').value:mode);if(mode==='range')params.set('amount',$('amount').value);if(mode==='day')params.set('date',$('day').value);const response=await fetch('/api/usage?'+params,{headers:{'X-Local-Token':key},cache:'no-store'});const data=await response.json();if(!response.ok)throw Error(data.error||'Usage request failed');$('day').min=data.oldest_day;$('day').max=data.today;if(!$('day').value)$('day').value=data.today;const t=data.totals;$('prompts').textContent=fmt(t.prompts);$('responses').textContent=fmt(t.responses);$('active').textContent=fmt(t.active_users)+' / '+fmt(t.active_chats);$('tokens').textContent=fmt(t.total_tokens);$('coverage').textContent=fmt(t.total_token_responses)+' of '+fmt(t.responses)+' responses have a total-token count';$('prompt-tokens').textContent=fmt(t.prompt_tokens);$('completion-tokens').textContent=fmt(t.completion_tokens);$('token-note').textContent=fmt(t.token_responses)+' responses have some recorded token usage; input/output subtotals may cover different responses.';draw('prompt-chart',data.buckets,'prompts',data.start,data.end,'prompt-scale','prompt-start','prompt-end');draw('token-chart',data.buckets,'tokens',data.start,data.end,'token-scale','token-start','token-end');rows('models',data.models,[x=>x.model,x=>fmt(x.responses),x=>fmt(x.token_responses),x=>fmt(x.total_tokens)]);rows('recent',data.recent,[x=>stamp(x.at),x=>x.role==='user'?'Prompt':'Response',x=>x.user,x=>x.model,x=>x.tokens===null?'Not recorded':fmt(x.tokens)]);$('updated').textContent='Updated '+new Date().toLocaleTimeString()}catch(error){$('updated').textContent='Could not load: '+error.message}finally{busy=false}}
+for(const id of ['mode','unit','amount','day'])$(id).addEventListener('change',()=>{controls();if($('mode').value!=='day'||$('day').value)load()});$('refresh').onclick=load;controls();load();setInterval(load,15000);
+</script></body></html>'''
+
+
 HTML = r'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Open WebUI Feedback Observatory</title>
@@ -326,7 +519,7 @@ h1{font-size:31px;margin:8px 0 6px;letter-spacing:-.035em}h2{font-size:16px;marg
 .facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.fact{background:#0b1721;border:1px solid #293e4b;border-radius:8px;padding:10px;min-width:0}.fact-label{display:block;color:#83a3b0;font-size:11px;margin-bottom:5px}.fact-value{display:block;color:#e0edf0;font-size:12px;overflow-wrap:anywhere}.fact-wide{grid-column:1/-1}
 @media(max-width:1040px){.shell{grid-template-columns:1fr}.rail{display:none}main{padding:22px 18px 45px}.cards{grid-template-columns:repeat(2,1fr)}}@media(max-width:680px){.grid{grid-template-columns:1fr}.cards{gap:8px}.card{padding:13px}.value{font-size:25px}.top{align-items:flex-start}h1{font-size:25px}.top-right{font-size:11px}.table th:nth-child(4),.table td:nth-child(4){display:none}}
 </style></head>
-<body><div class="shell"><aside class="rail"><div class="brand"><span class="mark">↗</span><span>Feedback<br>Observatory</span></div><div class="rail-note">Workspace</div><div class="nav">◉ &nbsp;Overview</div><div class="privacy"><strong>Private by design</strong>Reads the local Open WebUI database. No cloud service, model call, or database write.</div></aside>
+<body><div class="shell"><aside class="rail"><div class="brand"><span class="mark">↗</span><span>Feedback<br>Observatory</span></div><div class="rail-note">Workspace</div><div class="nav">◉ &nbsp;Overview</div><a id="usage-link" class="nav" style="display:block;margin-top:8px;text-decoration:none;background:#14242e;color:#c5dbe2" href="#">Chat usage</a><div class="privacy"><strong>Private by design</strong>Reads the local Open WebUI database. No cloud service, model call, or database write.</div></aside>
 <main><div class="top"><div><div class="eyebrow">Open WebUI · Quality monitoring</div><h1>Feedback overview</h1><div class="sub">Live ratings and a review queue for model responses.</div></div><div class="top-right"><div class="live"><span class="dot"></span><span id="live">Connecting…</span></div><button class="refresh" id="refresh">↻ &nbsp; Refresh</button></div></div>
 <div class="cards"><div class="card"><div class="label">Rated responses</div><div class="value neutral" id="total">—</div><div class="hint">Only responses with a thumb rating</div></div><div class="card"><div class="label">Thumbs up</div><div class="value good" id="up">—</div><div class="hint" id="upHint">Positive ratings</div></div><div class="card"><div class="label">Thumbs down</div><div class="value bad" id="down">—</div><div class="hint" id="downHint">Needs investigation</div></div><div class="card"><div class="label">Downvote share</div><div class="value" id="share">—</div><div class="hint">Downvotes ÷ rated responses, not all chats</div></div></div>
 <div class="grid"><section class="panel"><div class="panel-head"><h2>Rating trend</h2><span class="muted">Last 14 days</span></div><div class="bars" id="chart"></div><div class="chart-labels"><span id="dateStart"></span><span id="dateEnd"></span></div><div class="legend"><span><i style="background:#4bcda8"></i>Thumbs up</span><span><i style="background:#fa817d"></i>Thumbs down</span></div></section><section class="panel"><div class="panel-head"><h2>Models with feedback</h2><span class="muted">By rated responses</span></div><div id="models"></div></section></div>
@@ -334,6 +527,7 @@ h1{font-size:31px;margin:8px 0 6px;letter-spacing:-.035em}h2{font-size:16px;marg
 <div class="overlay" id="overlay" role="dialog" aria-modal="true" aria-label="Feedback details"><div class="drawer"><div class="drawer-top"><div><div class="eyebrow">Feedback details</div><h1 id="detailTitle">Response</h1></div><button class="close" id="close" aria-label="Close details">✕</button></div><div class="detail-meta" id="detailMeta"></div><div class="section-label">Saved chat details</div><div class="facts" id="facts"></div><div class="section-label">User question</div><div class="text-box" id="question">Loading…</div><div class="section-label">Model answer</div><div class="text-box" id="answer">Loading…</div><div class="section-label">User reason / comment</div><div class="text-box" id="reason">—</div><div class="section-label">Other feedback details</div><div class="text-box" id="extraDetails">—</div><div class="section-label">Saved error / status events</div><div class="text-box" id="errorInfo">—</div><div class="warning">Your database has no dedicated HTTP-status column, and the audit found no explicit HTTP-status field in rated snapshots. If an individual message saved a code inside an error, it appears above; otherwise it is not recorded. A completed answer does not prove HTTP 200. This read-only view includes rated responses only. Do not share company chat snapshots or screenshots without approval.</div></div></div>
 <script>
 const key=new URLSearchParams(location.search).get('key')||'';
+document.getElementById('usage-link').href='/usage?key='+encodeURIComponent(key);
 let all=[],lastFocus=null;
 const $=id=>document.getElementById(id);
 const fmt=n=>Number(n).toLocaleString();
@@ -380,15 +574,24 @@ def make_handler(database, token):
         def do_GET(self):
             parsed = urlparse(self.path)
             query = parse_qs(parsed.query)
-            supplied = (query.get("key") or [""])[0] if parsed.path == "/" else self.headers.get("X-Local-Token", "")
+            supplied = ((query.get("key") or [""])[0] if parsed.path in ("/", "/usage")
+                        else self.headers.get("X-Local-Token", ""))
             if not secrets.compare_digest(supplied, token):
                 self.json_reply(403, {"error": "Access key required."})
                 return
             try:
                 if parsed.path == "/":
                     self.reply(200, HTML, "text/html; charset=utf-8")
+                elif parsed.path == "/usage":
+                    self.reply(200, USAGE_HTML, "text/html; charset=utf-8")
                 elif parsed.path == "/api/feedback":
                     self.json_reply(200, read_feedback(database))
+                elif parsed.path == "/api/usage":
+                    view = (query.get("view") or ["hours"])[0]
+                    amount_text = (query.get("amount") or ["2"])[0]
+                    amount = int(amount_text) if view in ("hours", "minutes") else None
+                    self.json_reply(200, read_usage(database, view, amount,
+                                                    (query.get("date") or [None])[0]))
                 elif parsed.path == "/api/detail":
                     feedback_id = (query.get("id") or [""])[0]
                     if not feedback_id or len(feedback_id) > 256:
@@ -399,6 +602,8 @@ def make_handler(database, token):
                                     result if result is not None else {"error": "Feedback not found."})
                 else:
                     self.json_reply(404, {"error": "Not found."})
+            except ValueError as error:
+                self.json_reply(400, {"error": str(error)})
             except (OSError, sqlite3.Error, RuntimeError) as error:
                 self.json_reply(500, {"error": str(error)})
 
