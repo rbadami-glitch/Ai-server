@@ -6,7 +6,7 @@ Scope: this code-only folder and its future private Git repository. The AI serve
 
 - Read `README.md` before changing deployment paths or dashboard behavior.
 - Make focused code changes locally and test with synthetic/temporary data. For GPU changes, run `python -B tests\test_gpu_dashboard.py`. Review `git diff`, `git status`, and the staged file list before any commit or push.
-- Keep a separate, approved private repository for these tools. Use a separate checkout on the AI server; use fast-forward-only updates of a clean checkout and identify the exact approved commit.
+- Keep a separate, approved private repository for these tools. Its AI-server checkout is `E:\AI\ollama\OpenWebUI-Monitoring\github`; use fast-forward-only updates of a clean checkout and identify the exact approved commit.
 - Keep GPU history at `E:\AI\ollama\OpenWebUI-Monitoring\GPU-RCA-Checks\CW-GPU-Dashboard-History` **on the AI server**, outside the Git checkout. Preserve existing JSON files when updating the script.
 - Treat feedback, logs, model-test captures, SQLite databases, backups, API keys, and user chat content as sensitive. Ask before publishing any code or examples that may contain company information.
 - Verify that the new dashboard starts on the AI server, serves `127.0.0.1:8791`, shows live data and custom minute/hour history, and writes to the server history folder before retiring the old copy.
