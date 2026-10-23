@@ -377,6 +377,10 @@ def read_usage(path, view="hours", amount=2, selected_day=None, now=None):
         if {"id", "name"} <= table_columns(db, "model"):
             models = {str(row["id"]): str(row["name"] or row["id"])
                       for row in db.execute("SELECT id, name FROM model")}
+        chat_owners = {}
+        if {"id", "user_id"} <= table_columns(db, "chat"):
+            chat_owners = {str(row["id"]): str(row["user_id"] or "")
+                           for row in db.execute("SELECT id, user_id FROM chat")}
         rows = db.execute(
             "SELECT id, chat_id, user_id, role, created_at, model_id, usage "
             "FROM chat_message WHERE role IN ('user', 'assistant') AND "
@@ -393,7 +397,7 @@ def read_usage(path, view="hours", amount=2, selected_day=None, now=None):
             tokens = token_counts(row["usage"]) if role == "assistant" else None
             events.append({"at": timestamp, "role": role,
                            "chat_id": str(row["chat_id"] or ""),
-                           "user_id": str(row["user_id"] or ""),
+                           "user_id": str(row["user_id"] or chat_owners.get(str(row["chat_id"] or ""), "")),
                            "model_id": str(row["model_id"] or ""),
                            "tokens": tokens})
 
@@ -401,10 +405,21 @@ def read_usage(path, view="hours", amount=2, selected_day=None, now=None):
 
     totals = {"prompts": 0, "responses": 0, "token_responses": 0,
               "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+              "prompt_token_responses": 0, "completion_token_responses": 0,
               "total_token_responses": 0}
     users, chats = set(), set()
-    by_model = defaultdict(lambda: {"responses": 0, "token_responses": 0,
-                                    "total_tokens": 0})
+    def empty_group():
+        return {"responses": 0, "token_responses": 0, "prompt_tokens": 0,
+                "completion_tokens": 0, "total_tokens": 0,
+                "prompt_token_responses": 0, "completion_token_responses": 0,
+                "total_token_responses": 0}
+
+    by_model = defaultdict(empty_group)
+    by_user = defaultdict(empty_group)
+    by_period_user_model = defaultdict(empty_group)
+    period_unit = ("day" if view == "week" else "hour"
+                   if view in ("day", "hours") or (view == "minutes" and amount > 60)
+                   else "minute")
     recent = []
     # A bounded number of chart points keeps the page useful for any allowed range.
     duration = (end - start).total_seconds()
@@ -425,18 +440,34 @@ def read_usage(path, view="hours", amount=2, selected_day=None, now=None):
         else:
             totals["responses"] += 1
             bucket["responses"] += 1
-            model = by_model[event["model_id"] or "Unknown model"]
-            model["responses"] += 1
+            user_id = event["user_id"] or "Unknown user"
+            model_id = event["model_id"] or "Unknown model"
+            local_at = datetime.fromtimestamp(at, start.tzinfo)
+            period = (local_at.strftime("%Y-%m-%d") if period_unit == "day"
+                      else local_at.strftime("%Y-%m-%d %H:00") if period_unit == "hour"
+                      else local_at.strftime("%Y-%m-%d %H:%M"))
+            groups = (by_model[model_id], by_user[user_id],
+                      by_period_user_model[(period, user_id, model_id)])
+            for group in groups:
+                group["responses"] += 1
             token_data = event["tokens"]
             if token_data is not None:
                 totals["token_responses"] += 1
-                model["token_responses"] += 1
+                for group in groups:
+                    group["token_responses"] += 1
                 for key in ("prompt", "completion", "total"):
                     if token_data[key] is not None:
                         totals[f"{key}_tokens"] += token_data[key]
+                        for group in groups:
+                            group[f"{key}_tokens"] += token_data[key]
+                        if key != "total":
+                            totals[f"{key}_token_responses"] += 1
+                            for group in groups:
+                                group[f"{key}_token_responses"] += 1
                 if token_data["total"] is not None:
                     totals["total_token_responses"] += 1
-                    model["total_tokens"] += token_data["total"]
+                    for group in groups:
+                        group["total_token_responses"] += 1
                     bucket["tokens"] += token_data["total"]
         if len(recent) < 100:
             recent.append({"at": at, "role": role,
@@ -447,6 +478,13 @@ def read_usage(path, view="hours", amount=2, selected_day=None, now=None):
     model_rows = [{"model": models.get(model_id, model_id), **values}
                   for model_id, values in by_model.items()]
     model_rows.sort(key=lambda row: (-row["responses"], row["model"]))
+    user_rows = [{"user": names.get(user_id, user_id), **values}
+                 for user_id, values in by_user.items()]
+    user_rows.sort(key=lambda row: (-row["responses"], row["user"]))
+    detail_rows = [{"period": period, "user": names.get(user_id, user_id),
+                    "model": models.get(model_id, model_id), **values}
+                   for (period, user_id, model_id), values in by_period_user_model.items()]
+    detail_rows.sort(key=lambda row: (row["period"], row["user"], row["model"]), reverse=True)
     for bucket_at in range(start_epoch, end_epoch, bucket_seconds):
         buckets.setdefault(bucket_at, {"at": bucket_at, "prompts": 0,
                                        "responses": 0, "tokens": 0})
@@ -454,7 +492,9 @@ def read_usage(path, view="hours", amount=2, selected_day=None, now=None):
             "oldest_day": oldest.isoformat(), "today": today.isoformat(),
             "totals": {**totals, "active_users": len(users), "active_chats": len(chats)},
             "buckets": sorted(buckets.values(), key=lambda item: item["at"]),
-            "models": model_rows, "recent": recent,
+            "models": model_rows, "users": user_rows,
+            "period_unit": period_unit, "user_model_periods": detail_rows,
+            "recent": recent,
             "note": "Saved chat prompts, not all HTTP/API requests. Token totals include only assistant responses with recorded usage."}
 
 
@@ -465,6 +505,7 @@ USAGE_HTML = r'''<!doctype html>
 *{box-sizing:border-box}body{margin:0;background:#0b111a}main{max-width:1450px;margin:auto;padding:30px 28px 60px}
 a{color:#77e8c7}h1{font-size:30px;margin:8px 0}h2{font-size:17px;margin:0 0 12px}.muted{color:#9bb0bf;font-size:13px;line-height:1.5}
 .top{display:flex;justify-content:space-between;gap:15px;align-items:start}.links{display:flex;gap:20px;padding-top:12px}
+.tabs{display:flex;gap:9px;flex-wrap:wrap;margin:21px 0 8px}.tabs a{display:inline-block;padding:10px 16px;border:1px solid #365260;border-radius:9px;background:#142431;color:#d5e8ed;text-decoration:none;font-size:13px;font-weight:700}.tabs a.active{background:#1e5349;border-color:#58d5b3;color:#e8fff6}
 .controls{display:flex;align-items:end;gap:12px;flex-wrap:wrap;margin:24px 0}.controls label{display:grid;gap:6px;color:#a9bfca;font-size:12px;font-weight:700}
 [hidden]{display:none!important}
 select,input,button{font:inherit;color:#e7eef5;background:#112432;border:1px solid #365260;border-radius:8px;padding:9px 11px;min-height:39px}
@@ -478,12 +519,15 @@ input[type=number]{width:95px}button{cursor:pointer}a:focus-visible,button:focus
 .notice{border-left:3px solid #70aef1;padding:11px 13px;background:#172735;margin:15px 0;color:#b5c8d4;font-size:12px;line-height:1.5}
 @media(max-width:950px){.cards{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}}@media(max-width:520px){main{padding:20px 13px}.cards{grid-template-columns:1fr 1fr}.value{font-size:22px}.top{display:block}}
 </style></head><body><main>
-<div class="top"><div><div class="muted">Open WebUI · Monitoring</div><h1>Chat usage</h1><div class="muted">Saved chat activity and recorded token usage, refreshed every 15 seconds.</div></div><div class="links"><a id="feedback-link" href="#">Feedback overview</a></div></div>
+<div class="top"><div><div class="muted">Open WebUI · Monitoring</div><h1>Usage data</h1><div class="muted">Saved chat activity and recorded token usage, refreshed every 15 seconds.</div></div></div>
+<nav class="tabs" aria-label="Dashboard pages"><a id="feedback-link" href="#">Feedback data</a><a class="active" aria-current="page" href="#">Usage data</a></nav>
 <div class="notice">These are saved chat messages, not a count of all HTTP/API requests to Open WebUI. Token totals are incomplete whenever a response has no saved usage data. No message text is shown here.</div>
 <div class="controls"><label>Range<select id="mode"><option value="range">Last N minutes or hours</option><option value="day">Selected day</option><option value="week">Last 7 days</option></select></label><label id="amount-box">Amount<input id="amount" type="number" min="1" max="168" value="2"></label><label id="unit-box">Unit<select id="unit"><option value="hours">Hours</option><option value="minutes">Minutes</option></select></label><label id="day-box" hidden>Day<input id="day" type="date"></label><button id="refresh">Refresh</button><span id="updated" class="muted">Loading…</span></div>
 <div class="cards"><div class="card"><div class="label">Chat prompts</div><div class="value" id="prompts">—</div><div class="hint">Saved user messages; not HTTP requests</div></div><div class="card"><div class="label">Assistant responses</div><div class="value" id="responses">—</div><div class="hint">Saved assistant messages</div></div><div class="card"><div class="label">Active users / chats</div><div class="value" id="active">—</div><div class="hint">Distinct IDs in selected period</div></div><div class="card"><div class="label">Recorded total tokens</div><div class="value" id="tokens">—</div><div class="hint" id="coverage">Only responses with saved counts</div></div></div>
 <div class="grid"><section class="panel"><h2>Chat prompts over time</h2><div class="muted">Vertical axis: saved user-message count per time bucket.</div><div class="chart" id="prompt-chart" role="img" aria-label="Saved chat prompts over time"></div><div class="axis"><span id="prompt-start">—</span><span id="prompt-scale">—</span><span id="prompt-end">—</span></div></section><section class="panel tokens"><h2>Recorded tokens over time</h2><div class="muted">Vertical axis: recorded total tokens per time bucket; missing counts are excluded.</div><div class="chart" id="token-chart" role="img" aria-label="Recorded tokens over time"></div><div class="axis"><span id="token-start">—</span><span id="token-scale">—</span><span id="token-end">—</span></div></section></div>
-<div class="grid"><section class="panel"><h2>Token detail</h2><div class="cards" style="grid-template-columns:repeat(2,1fr)"><div><div class="label">Prompt tokens</div><div class="value" id="prompt-tokens">—</div></div><div><div class="label">Completion tokens</div><div class="value" id="completion-tokens">—</div></div></div><p class="muted" id="token-note"></p></section><section class="panel"><h2>Responses by model</h2><div class="table-wrap"><table><thead><tr><th>Model</th><th>Responses</th><th>With usage</th><th>Recorded tokens</th></tr></thead><tbody id="models"></tbody></table></div></section></div>
+<div class="grid"><section class="panel"><h2>Token detail</h2><div class="cards" style="grid-template-columns:repeat(2,1fr)"><div><div class="label">Prompt tokens</div><div class="value" id="prompt-tokens">—</div></div><div><div class="label">Completion tokens</div><div class="value" id="completion-tokens">—</div></div></div><p class="muted" id="token-note"></p></section><section class="panel"><h2>Responses by model</h2><div class="table-wrap"><table><thead><tr><th>Model</th><th>Responses</th><th>With tokens</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody id="models"></tbody></table></div></section></div>
+<section class="panel"><h2>Responses by user</h2><p class="muted">The caller is the message owner recorded by Open WebUI, with the chat owner used when the message user ID is empty.</p><div class="table-wrap"><table><thead><tr><th>User</th><th>Responses</th><th>With tokens</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody id="users"></tbody></table></div></section>
+<section class="panel"><h2 id="period-title">Usage by time, user and model</h2><p class="muted">Each row combines saved assistant responses for one time period, caller and model. Token columns include recorded values only.</p><div class="controls"><input id="breakdown-search" type="search" placeholder="Filter by user or model" aria-label="Filter usage breakdown"><span class="muted" id="breakdown-count"></span></div><div class="table-wrap"><table><thead><tr><th>Period</th><th>User</th><th>Model</th><th>Responses</th><th>With tokens</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody id="breakdown"></tbody></table></div></section>
 <section class="panel"><h2>Recent saved chat activity</h2><p class="muted">Newest 100 messages in the selected period. No prompt or answer text is loaded.</p><div class="table-wrap"><table><thead><tr><th>Time</th><th>Type</th><th>User</th><th>Model</th><th>Recorded total tokens</th></tr></thead><tbody id="recent"></tbody></table></div></section>
 </main><script>
 const key=new URLSearchParams(location.search).get('key')||'';
@@ -491,11 +535,48 @@ const $=id=>document.getElementById(id),fmt=n=>Number(n).toLocaleString(),stamp=
 const node=(tag,value)=>{const item=document.createElement(tag);item.textContent=value;return item};
 $('feedback-link').href='/?key='+encodeURIComponent(key);
 function controls(){const mode=$('mode').value,range=mode==='range';$('amount-box').hidden=!range;$('unit-box').hidden=!range;$('day-box').hidden=mode!=='day';$('amount').max=$('unit').value==='minutes'?10080:168;if(+$('amount').value>+$('amount').max)$('amount').value=$('amount').max}
-function draw(rootId,points,field,start,end,scaleId,startId,endId){const root=$(rootId);root.replaceChildren();const max=Math.max(1,...points.map(x=>x[field]));for(const item of points){const bar=node('div','');bar.className='bar';bar.style.height=(item[field]===0?0:Math.max(2,item[field]/max*195))+'px';bar.title=stamp(item.at)+' · '+fmt(item[field]);root.append(bar)}$(scaleId).textContent='Peak '+fmt(max)+' / bucket';$(startId).textContent=new Date(start).toLocaleString();$(endId).textContent=new Date(end).toLocaleString()}
+function draw(rootId,points,field,start,end,scaleId,startId,endId){const root=$(rootId);root.replaceChildren();const max=Math.max(0,...points.map(x=>x[field]));for(const item of points){const bar=node('div','');bar.className='bar';bar.style.height=(item[field]===0?0:Math.max(2,item[field]/max*195))+'px';bar.title=stamp(item.at)+' · '+fmt(item[field]);root.append(bar)}$(scaleId).textContent='Peak '+fmt(max)+' / bucket';$(startId).textContent=new Date(start).toLocaleString();$(endId).textContent=new Date(end).toLocaleString()}
 function rows(rootId,items,columns){const root=$(rootId);root.replaceChildren();if(!items.length){const row=node('tr',''),cell=node('td','No saved activity in this period.');cell.colSpan=columns.length;row.append(cell);root.append(row);return}for(const item of items){const row=node('tr','');for(const column of columns)row.append(node('td',column(item)));root.append(row)}}
-let busy=false;
-async function load(){if(busy)return;busy=true;try{const params=new URLSearchParams(),mode=$('mode').value;params.set('view',mode==='range'?$('unit').value:mode);if(mode==='range')params.set('amount',$('amount').value);if(mode==='day')params.set('date',$('day').value);const response=await fetch('/api/usage?'+params,{headers:{'X-Local-Token':key},cache:'no-store'});const data=await response.json();if(!response.ok)throw Error(data.error||'Usage request failed');$('day').min=data.oldest_day;$('day').max=data.today;if(!$('day').value)$('day').value=data.today;const t=data.totals;$('prompts').textContent=fmt(t.prompts);$('responses').textContent=fmt(t.responses);$('active').textContent=fmt(t.active_users)+' / '+fmt(t.active_chats);$('tokens').textContent=fmt(t.total_tokens);$('coverage').textContent=fmt(t.total_token_responses)+' of '+fmt(t.responses)+' responses have a total-token count';$('prompt-tokens').textContent=fmt(t.prompt_tokens);$('completion-tokens').textContent=fmt(t.completion_tokens);$('token-note').textContent=fmt(t.token_responses)+' responses have some recorded token usage; input/output subtotals may cover different responses.';draw('prompt-chart',data.buckets,'prompts',data.start,data.end,'prompt-scale','prompt-start','prompt-end');draw('token-chart',data.buckets,'tokens',data.start,data.end,'token-scale','token-start','token-end');rows('models',data.models,[x=>x.model,x=>fmt(x.responses),x=>fmt(x.token_responses),x=>fmt(x.total_tokens)]);rows('recent',data.recent,[x=>stamp(x.at),x=>x.role==='user'?'Prompt':'Response',x=>x.user,x=>x.model,x=>x.tokens===null?'Not recorded':fmt(x.tokens)]);$('updated').textContent='Updated '+new Date().toLocaleTimeString()}catch(error){$('updated').textContent='Could not load: '+error.message}finally{busy=false}}
-for(const id of ['mode','unit','amount','day'])$(id).addEventListener('change',()=>{controls();if($('mode').value!=='day'||$('day').value)load()});$('refresh').onclick=load;controls();load();setInterval(load,15000);
+let busy=false,lastUsage=null;
+const recorded=(value,count)=>count?fmt(value):'Not recorded';
+function renderBreakdown(){
+  if(!lastUsage)return;
+  const query=$('breakdown-search').value.trim().toLowerCase();
+  const matching=lastUsage.user_model_periods.filter(x=>!query||[x.user,x.model,x.period].join(' ').toLowerCase().includes(query));
+  rows('breakdown',matching.slice(0,300),[x=>x.period,x=>x.user,x=>x.model,x=>fmt(x.responses),x=>fmt(x.total_token_responses)+' / '+fmt(x.responses),x=>recorded(x.prompt_tokens,x.prompt_token_responses),x=>recorded(x.completion_tokens,x.completion_token_responses),x=>recorded(x.total_tokens,x.total_token_responses)]);
+  $('breakdown-count').textContent='Showing '+fmt(Math.min(300,matching.length))+' of '+fmt(matching.length)+' matching groups'+(matching.length>300?' · narrow the filter to see more':'');
+}
+async function load(){
+  if(busy)return;busy=true;
+  try{
+    const params=new URLSearchParams(),mode=$('mode').value;
+    params.set('view',mode==='range'?$('unit').value:mode);
+    if(mode==='range')params.set('amount',$('amount').value);
+    if(mode==='day')params.set('date',$('day').value);
+    const response=await fetch('/api/usage?'+params,{headers:{'X-Local-Token':key},cache:'no-store'});
+    const data=await response.json();if(!response.ok)throw Error(data.error||'Usage request failed');
+    lastUsage=data;$('day').min=data.oldest_day;$('day').max=data.today;if(!$('day').value)$('day').value=data.today;
+    const t=data.totals;
+    $('prompts').textContent=fmt(t.prompts);$('responses').textContent=fmt(t.responses);
+    $('active').textContent=fmt(t.active_users)+' / '+fmt(t.active_chats);
+    $('tokens').textContent=recorded(t.total_tokens,t.total_token_responses);
+    $('coverage').textContent=fmt(t.total_token_responses)+' of '+fmt(t.responses)+' responses have a total-token count';
+    $('prompt-tokens').textContent=recorded(t.prompt_tokens,t.prompt_token_responses);$('completion-tokens').textContent=recorded(t.completion_tokens,t.completion_token_responses);
+    $('token-note').textContent=fmt(t.token_responses)+' responses have some recorded token usage; input/output subtotals may cover different responses.';
+    draw('prompt-chart',data.buckets,'prompts',data.start,data.end,'prompt-scale','prompt-start','prompt-end');
+    draw('token-chart',data.buckets,'tokens',data.start,data.end,'token-scale','token-start','token-end');
+    const totalColumns=[x=>fmt(x.responses),x=>fmt(x.total_token_responses)+' / '+fmt(x.responses),x=>recorded(x.prompt_tokens,x.prompt_token_responses),x=>recorded(x.completion_tokens,x.completion_token_responses),x=>recorded(x.total_tokens,x.total_token_responses)];
+    rows('models',data.models,[x=>x.model,...totalColumns]);
+    rows('users',data.users,[x=>x.user,...totalColumns]);
+    $('period-title').textContent='Usage by '+data.period_unit+', user and model';
+    renderBreakdown();
+    rows('recent',data.recent,[x=>stamp(x.at),x=>x.role==='user'?'Prompt':'Response',x=>x.user,x=>x.model,x=>x.tokens===null?'Not recorded':fmt(x.tokens)]);
+    $('updated').textContent='Updated '+new Date().toLocaleTimeString();
+  }catch(error){$('updated').textContent='Could not load: '+error.message}finally{busy=false}
+}
+for(const id of ['mode','unit','amount','day'])$(id).addEventListener('change',()=>{controls();if($('mode').value!=='day'||$('day').value)load()});
+$('breakdown-search').addEventListener('input',renderBreakdown);
+$('refresh').onclick=load;controls();load();setInterval(load,15000);
 </script></body></html>'''
 
 
@@ -517,10 +598,11 @@ h1{font-size:31px;margin:8px 0 6px;letter-spacing:-.035em}h2{font-size:16px;marg
 .feed{margin-top:14px}.controls{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0}.controls input,.controls select{background:#0f1922;border:1px solid #344550;border-radius:8px;color:#dbe9ed;padding:9px 11px;min-height:38px}.controls input{flex:1 1 260px}.controls select{flex:0 1 180px}.table-wrap{overflow:auto}.table{width:100%;border-collapse:collapse;text-align:left}.table th{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#7f97a6;border-bottom:1px solid #31434e;padding:12px 10px}.table td{font-size:12px;color:#b3c5d0;padding:13px 10px;border-bottom:1px solid #263742;vertical-align:top}.table tr:last-child td{border-bottom:0}.table tbody tr{cursor:pointer}.table tbody tr:hover{background:#192b36}.name{color:#e6f1f2!important;font-weight:650}.pill{display:inline-block;border-radius:999px;padding:5px 9px;font-size:11px;font-weight:700;white-space:nowrap}.pill.up{color:#73e7bf;background:#1a483c}.pill.down{color:#ffa49f;background:#4a282e}.truncate{max-width:330px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.empty{padding:34px 10px;color:#90a6b2;text-align:center;font-size:13px}.status{margin-top:12px;color:#90a7b3;font-size:11px}
 .overlay{position:fixed;inset:0;background:#020a10c7;display:none;justify-content:flex-end;z-index:20}.overlay.open{display:flex}.drawer{width:min(650px,100%);height:100%;overflow:auto;background:#101c27;border-left:1px solid #36505e;padding:28px 28px 45px;box-shadow:-25px 0 55px #0006}.drawer-top{display:flex;justify-content:space-between;gap:15px}.close{background:#1e323d;border:1px solid #37515c;color:#dce9ed;border-radius:8px;padding:6px 11px}.detail-meta{margin:16px 0 24px;display:flex;gap:8px;flex-wrap:wrap}.detail-meta span{font-size:11px;color:#a8c2ce;background:#1b303b;border-radius:6px;padding:6px 9px}.section-label{font-size:11px;color:#64d5b6;text-transform:uppercase;letter-spacing:.12em;font-weight:750;margin:20px 0 8px}.text-box{white-space:pre-wrap;overflow-wrap:anywhere;background:#0b1721;border:1px solid #293e4b;border-radius:9px;padding:13px;color:#d6e7ea;line-height:1.55;font-size:13px;max-height:360px;overflow:auto}.warning{margin-top:18px;color:#8ba4af;font-size:11px;line-height:1.5}
 .facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.fact{background:#0b1721;border:1px solid #293e4b;border-radius:8px;padding:10px;min-width:0}.fact-label{display:block;color:#83a3b0;font-size:11px;margin-bottom:5px}.fact-value{display:block;color:#e0edf0;font-size:12px;overflow-wrap:anywhere}.fact-wide{grid-column:1/-1}
+.page-tabs{display:flex;gap:9px;flex-wrap:wrap;margin:0 0 22px}.page-tabs a{display:inline-block;padding:10px 16px;border:1px solid #365260;border-radius:9px;background:#142431;color:#d5e8ed;text-decoration:none;font-size:13px;font-weight:700}.page-tabs a.active{background:#1e5349;border-color:#58d5b3;color:#e8fff6}.page-tabs a:focus-visible{outline:2px solid #5ee2be;outline-offset:2px}
 @media(max-width:1040px){.shell{grid-template-columns:1fr}.rail{display:none}main{padding:22px 18px 45px}.cards{grid-template-columns:repeat(2,1fr)}}@media(max-width:680px){.grid{grid-template-columns:1fr}.cards{gap:8px}.card{padding:13px}.value{font-size:25px}.top{align-items:flex-start}h1{font-size:25px}.top-right{font-size:11px}.table th:nth-child(4),.table td:nth-child(4){display:none}}
 </style></head>
-<body><div class="shell"><aside class="rail"><div class="brand"><span class="mark">↗</span><span>Feedback<br>Observatory</span></div><div class="rail-note">Workspace</div><div class="nav">◉ &nbsp;Overview</div><a id="usage-link" class="nav" style="display:block;margin-top:8px;text-decoration:none;background:#14242e;color:#c5dbe2" href="#">Chat usage</a><div class="privacy"><strong>Private by design</strong>Reads the local Open WebUI database. No cloud service, model call, or database write.</div></aside>
-<main><div class="top"><div><div class="eyebrow">Open WebUI · Quality monitoring</div><h1>Feedback overview</h1><div class="sub">Live ratings and a review queue for model responses.</div></div><div class="top-right"><div class="live"><span class="dot"></span><span id="live">Connecting…</span></div><button class="refresh" id="refresh">↻ &nbsp; Refresh</button></div></div>
+<body><div class="shell"><aside class="rail"><div class="brand"><span class="mark">↗</span><span>Open WebUI<br>Observatory</span></div><div class="rail-note">Workspace</div><div class="privacy"><strong>Private by design</strong>Reads the local Open WebUI database. No cloud service, model call, or database write.</div></aside>
+<main><nav class="page-tabs" aria-label="Dashboard pages"><a class="active" aria-current="page" href="#">Feedback data</a><a id="usage-link" href="#">Usage data</a></nav><div class="top"><div><div class="eyebrow">Open WebUI · Quality monitoring</div><h1>Feedback data</h1><div class="sub">Live ratings and a review queue for model responses.</div></div><div class="top-right"><div class="live"><span class="dot"></span><span id="live">Connecting…</span></div><button class="refresh" id="refresh">↻ &nbsp; Refresh</button></div></div>
 <div class="cards"><div class="card"><div class="label">Rated responses</div><div class="value neutral" id="total">—</div><div class="hint">Only responses with a thumb rating</div></div><div class="card"><div class="label">Thumbs up</div><div class="value good" id="up">—</div><div class="hint" id="upHint">Positive ratings</div></div><div class="card"><div class="label">Thumbs down</div><div class="value bad" id="down">—</div><div class="hint" id="downHint">Needs investigation</div></div><div class="card"><div class="label">Downvote share</div><div class="value" id="share">—</div><div class="hint">Downvotes ÷ rated responses, not all chats</div></div></div>
 <div class="grid"><section class="panel"><div class="panel-head"><h2>Rating trend</h2><span class="muted">Last 14 days</span></div><div class="bars" id="chart"></div><div class="chart-labels"><span id="dateStart"></span><span id="dateEnd"></span></div><div class="legend"><span><i style="background:#4bcda8"></i>Thumbs up</span><span><i style="background:#fa817d"></i>Thumbs down</span></div></section><section class="panel"><div class="panel-head"><h2>Models with feedback</h2><span class="muted">By rated responses</span></div><div id="models"></div></section></div>
 <section class="panel feed"><div class="panel-head"><div><h2>Feedback review queue</h2><div class="sub">Click a row to inspect its saved question and answer, when available.</div></div><span class="muted" id="shown"></span></div><div class="controls"><input id="search" type="search" placeholder="Search model, user, reason or comment" aria-label="Search feedback"><select id="modelFilter" aria-label="Model"><option value="">All models</option></select><select id="ratingFilter" aria-label="Rating"><option value="">All ratings</option><option value="-1">Thumbs down</option><option value="1">Thumbs up</option></select><select id="daysFilter" aria-label="Period"><option value="30">Last 30 days</option><option value="7">Last 7 days</option><option value="0">All time</option></select></div><div class="table-wrap"><table class="table"><thead><tr><th>Rating</th><th>Model</th><th>Reason / comment</th><th>User</th><th>Date</th></tr></thead><tbody id="rows"></tbody></table></div><div class="empty" id="empty" hidden>No feedback matches these filters.</div><div class="status" id="status"></div></section></main></div>
