@@ -21,6 +21,20 @@ python -B 'E:\AI\ollama\OpenWebUI-Monitoring\github\OpenWebUi Monitor\OpenWebUI-
 
 If the actual `webui.db` is elsewhere, pass that exact path to `--db`. The script does not restart Open WebUI or change its database. The new Git commit must be pulled on the AI server and this Python process restarted before its new page appears. Offline tests use a synthetic database: `python -B -m unittest discover -s tests -p 'test_*.py'`.
 
+## Proposed direct Ollama capture pilot
+
+Direct calls to Ollama are outside the Open WebUI chat-usage page. The operator requires unchanged client URLs and no added wait in the user request/answer path. A proxy or Ollama port cutover is not part of this pilot.
+
+`tests/probe_npcap_loopback.py` is a **count-only feasibility probe**, not a running monitor. It requires Npcap to have been separately installed and approved on the AI server. It opens Npcap's loopback interface, filters TCP port `11435`, makes one direct read-only `/api/version` request, prints the number of matching packets, and closes the capture. It saves no packet data and does not load a model. The script has passed a local syntax check but has not been run with Npcap or on the AI server.
+
+After Npcap installation has been reviewed and approved, run on the **AI server**:
+
+```powershell
+python -B 'E:\AI\ollama\OpenWebUI-Monitoring\github\tests\probe_npcap_loopback.py'
+```
+
+A nonzero count would establish loopback visibility for this small test only. It would not establish exact request counts, HTTP status extraction, token parsing, deduplication across forwarding rules, or unchanged model-response latency. Those need separate validation before a long-running collector or dashboard page is considered ready. Do not install a capture driver or run long-lived packet capture as part of a source-only Git update.
+
 ## Where GPU history lives
 
 Run the GPU dashboard **on the AI server**. Its history is written to:
