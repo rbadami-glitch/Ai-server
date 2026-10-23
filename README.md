@@ -25,15 +25,9 @@ If the actual `webui.db` is elsewhere, pass that exact path to `--db`. The scrip
 
 Direct calls to Ollama are outside the Open WebUI chat-usage page. The operator requires unchanged client URLs and no added wait in the user request/answer path. A proxy or Ollama port cutover is not part of this pilot.
 
-`tests/probe_npcap_loopback.py` is a **count-only feasibility probe**, not a running monitor. It requires Npcap to have been separately installed and approved on the AI server. It opens Npcap's loopback interface, filters TCP port `11435`, makes one direct read-only `/api/version` request, prints the number of matching packets, and closes the capture. It saves no packet data and does not load a model. The script has passed a local syntax check but has not been run with Npcap or on the AI server.
+`tests/probe_npcap_loopback.py` is a **count-only feasibility probe**, not a running monitor. Its pilot is suspended: the operator cannot shut down, restart, or reboot the Windows AI-server OS, and Npcap installation may require a reboot or briefly interrupt networking. Do not install Npcap or run this probe under the current constraint. The script passed a local syntax check but has not been run with Npcap or on the AI server.
 
-After Npcap installation has been reviewed and approved, run on the **AI server**:
-
-```powershell
-python -B 'E:\AI\ollama\OpenWebUI-Monitoring\github\tests\probe_npcap_loopback.py'
-```
-
-A nonzero count would establish loopback visibility for this small test only. It would not establish exact request counts, HTTP status extraction, token parsing, deduplication across forwarding rules, or unchanged model-response latency. Those need separate validation before a long-running collector or dashboard page is considered ready. Do not install a capture driver or run long-lived packet capture as part of a source-only Git update.
+The built-in Windows WFP capture provider is the next feasibility check. Its availability and loopback visibility on this server have not yet been verified. A packet-counting result would not establish exact request counts, HTTP status extraction, token parsing, deduplication across forwarding rules, or unchanged model-response latency. Those need separate validation before a long-running collector or dashboard page is considered ready.
 
 ## Where GPU history lives
 

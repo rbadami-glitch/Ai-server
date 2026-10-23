@@ -18,4 +18,5 @@ Scope: this code-only folder and its future private Git repository. The AI serve
 - Do not add these tools to the unrelated `Cw-llama-index` repository or alter that repository's dirty worktree.
 - Do not delete or overwrite the old server scripts, history, or database during setup; do not use `git clean -fdx`, `git reset --hard`, or force-push as a shortcut.
 - Do not restart Open WebUI or Ollama, change service settings, load/unload models, change file permissions/ownership, or open firewall access as part of a dashboard source update without an explicit request and reviewed plan.
+- The operator cannot shut down, restart, or reboot the Windows AI-server OS. Do not propose a pilot that may require an OS reboot. The Npcap installation pilot is suspended; check the built-in Windows WFP capture option before considering any new driver.
 - Do not assume that a Git push/pull restarts a running dashboard. Stop and start only the intended dashboard process during an approved cutover.
