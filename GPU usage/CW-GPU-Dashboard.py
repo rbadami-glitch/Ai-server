@@ -80,8 +80,8 @@ def openwebui_activity(start, end, path=OPENWEBUI_DB):
         for lower, upper in ((start_epoch, end_epoch),
                              (start_epoch * 1000, end_epoch * 1000)):
             saved.extend(db.execute(
-                "SELECT created_at, role, model_id, usage FROM chat_message "
-                "WHERE role IN ('user', 'assistant') AND created_at >= ? AND created_at < ? "
+                "SELECT created_at, model_id, usage FROM chat_message "
+                "WHERE role = 'assistant' AND created_at >= ? AND created_at < ? "
                 "ORDER BY created_at DESC LIMIT ?",
                 (lower, upper, WEBUI_ROWS + 1),
             ).fetchall())
@@ -92,9 +92,8 @@ def openwebui_activity(start, end, path=OPENWEBUI_DB):
         at = int(item["created_at"])
         if at > 10**12:
             at //= 1000
-        prompt, completion, total = _usage_counts(item["usage"]) if item["role"] == "assistant" else (None, None, None)
-        rows.append({"at": at, "type": "Response" if item["role"] == "assistant" else "Prompt",
-                     "model": str(item["model_id"] or "Not saved")[:256],
+        prompt, completion, total = _usage_counts(item["usage"])
+        rows.append({"at": at, "model": str(item["model_id"] or "Not saved")[:256],
                      "prompt_tokens": prompt, "completion_tokens": completion,
                      "total_tokens": total})
     return {"available": True, "rows": rows, "more_rows": len(saved) > WEBUI_ROWS}
@@ -387,7 +386,7 @@ PAGE = r'''<!doctype html>
     <section class="panel"><h2>Open WebUI chat routes</h2><div class="small">A chat entry and its underlying model share the same memory. “Loaded” below means the base model appears in Ollama now.</div><div id="routes" style="margin-top:13px"></div></section>
     <section class="panel"><h2>GPU processes</h2><div id="processes" class="small">Waiting for process data</div></section>
   </div></div>
-  <section class="panel"><div class="panel-title"><h2>Open WebUI chat activity</h2><span class="small">Same range as GPU graph</span></div><div class="small request-note" id="webui-notice" role="status">Checking saved Open WebUI messages. GPU memory changes alone do not identify a request.</div><div class="table-wrap"><table><thead><tr><th>Saved at</th><th>Type</th><th>Open WebUI model</th><th>Input tokens</th><th>Output tokens</th><th>Total tokens</th></tr></thead><tbody id="webui-rows"><tr><td colspan="6">Loading...</td></tr></tbody></table></div></section>
+  <section class="panel"><div class="panel-title"><h2>Open WebUI chat activity</h2><span class="small">Same range as GPU graph</span></div><div class="small request-note" id="webui-notice" role="status">Checking saved Open WebUI responses. GPU memory changes alone do not identify a request.</div><div class="table-wrap"><table><thead><tr><th>Saved at</th><th>Open WebUI model</th><th>Input tokens</th><th>Output tokens</th><th>Total tokens</th></tr></thead><tbody id="webui-rows"><tr><td colspan="5">Loading...</td></tr></tbody></table></div></section>
   <footer>Live status refreshes every 3 seconds. While this server script runs, it saves one GPU sample per minute in seven daily JSON files, even if this browser tab is closed. It cannot recover time before recording began or gaps while the script was stopped. Open WebUI activity uses saved chat metadata only; it does not count all HTTP requests, and token counts may be missing. A GPU memory spike can come from model loading or another client. Idle expiry is the current Ollama timer; new requests can move it. GPU memory includes other processes and overhead, so it may differ from model VRAM totals. Press Ctrl+C in PowerShell to stop recording and the dashboard.</footer>
 </div>
 <script>
@@ -521,8 +520,8 @@ async function loadWebUIActivity(){
     const data=await response.json();if(!response.ok)throw Error(data.error||'Open WebUI activity read failed');
     if(request!==webuiRequest)return;
     el('webui-notice').textContent=!data.available?'Open WebUI database not found on this server.':
-      'Saved chat messages only; not all HTTP requests. '+data.rows.length+' rows shown'+(data.more_rows?' (older rows omitted).':'.')+' Missing token counts mean Open WebUI did not save usage for that message.';
-    el('webui-rows').innerHTML=data.rows.length?data.rows.map(r=>'<tr><td>'+esc(new Date(r.at*1000).toLocaleString())+'</td><td>'+esc(r.type)+'</td><td>'+esc(r.model)+'</td><td>'+esc(r.prompt_tokens??'Not recorded')+'</td><td>'+esc(r.completion_tokens??'Not recorded')+'</td><td>'+esc(r.total_tokens??'Not recorded')+'</td></tr>').join(''):'<tr><td colspan="6">No saved chat messages in this range.</td></tr>';
+      'Saved assistant responses only; not all HTTP requests. '+data.rows.length+' rows shown'+(data.more_rows?' (older rows omitted).':'.')+' Missing token counts mean Open WebUI did not save usage for that response.';
+    el('webui-rows').innerHTML=data.rows.length?data.rows.map(r=>'<tr><td>'+esc(new Date(r.at*1000).toLocaleString())+'</td><td>'+esc(r.model)+'</td><td>'+esc(r.prompt_tokens??'Not recorded')+'</td><td>'+esc(r.completion_tokens??'Not recorded')+'</td><td>'+esc(r.total_tokens??'Not recorded')+'</td></tr>').join(''):'<tr><td colspan="5">No saved assistant responses in this range.</td></tr>';
   }catch(error){if(request===webuiRequest)el('webui-notice').textContent='Could not read Open WebUI activity: '+error.message}
 }
 el('pause').onclick=()=>{paused=!paused;el('pause').textContent=paused?'Resume view':'Pause view';el('live-text').textContent=paused?'View paused · recording continues':'Live · 3s';if(!paused){refresh();loadHistory()}};
