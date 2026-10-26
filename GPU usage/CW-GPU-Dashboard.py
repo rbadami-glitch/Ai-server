@@ -15,7 +15,7 @@ import tempfile
 import threading
 import urllib.request
 import webbrowser
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -32,6 +32,96 @@ HISTORY_DIR = Path(
 )
 SAMPLE_SECONDS = 60
 RETENTION_DAYS = 7
+REQUEST_LOG_DIR = Path(r"E:\AI\ollama\OpenWebUI-Monitoring\Direct-Usage")
+REQUEST_LOG_PORTS = (11434, 11435)
+REQUEST_TAIL_BYTES = 4 * 1024 * 1024
+REQUEST_LINE_BYTES = 8192
+REQUEST_ROWS = 200
+
+
+def request_logs(hours=24, directory=REQUEST_LOG_DIR, now=None):
+    """Read a bounded, metadata-only tail of Ollama ingress recorder files.
+
+    This dashboard is a reader. File presence does not prove capture completeness.
+    The recorder must run separately on both Ollama ingress listeners.
+    """
+    if hours not in (1, 24, 168):
+        raise ValueError("Request range must be 1, 24, or 168 hours.")
+    now = now or datetime.now(timezone.utc)
+    start = now - timedelta(hours=hours)
+    day = start.date()
+    rows = []
+    files_found = partial_files = invalid_rows = dropped = 0
+    while day <= now.date():
+        for port in REQUEST_LOG_PORTS:
+            path = directory / f"ollama-{port}-{day.isoformat()}.jsonl"
+            try:
+                with path.open("rb") as stream:
+                    files_found += 1
+                    size = stream.seek(0, os.SEEK_END)
+                    if size > REQUEST_TAIL_BYTES:
+                        partial_files += 1
+                        stream.seek(size - REQUEST_TAIL_BYTES)
+                        stream.readline()  # Discard the first incomplete line.
+                    else:
+                        stream.seek(0)
+                    for line in stream:
+                        if len(line) > REQUEST_LINE_BYTES or not line.endswith(b"\n"):
+                            invalid_rows += 1
+                            continue
+                        try:
+                            raw = json.loads(line)
+                        except (UnicodeDecodeError, ValueError):
+                            invalid_rows += 1
+                            continue
+                        if not isinstance(raw, dict) or raw.get("schema") != 1:
+                            invalid_rows += 1
+                            continue
+                        at = raw.get("at")
+                        if type(at) is not int or not start.timestamp() <= at <= now.timestamp():
+                            continue
+                        if raw.get("kind") == "dropped":
+                            count = raw.get("dropped")
+                            if type(count) is int and count >= 0:
+                                dropped += count
+                            else:
+                                invalid_rows += 1
+                            continue
+                        status = raw.get("status")
+                        if (str(raw.get("listener")) != str(port) or
+                                type(status) is not int or not 100 <= status <= 599):
+                            invalid_rows += 1
+                            continue
+                        def count(key):
+                            value = raw.get(key)
+                            return value if type(value) is int and value >= 0 else None
+                        def label(key):
+                            value = raw.get(key)
+                            return value[:256] if isinstance(value, str) and value else "Unknown"
+                        prompt = count("prompt_tokens")
+                        completion = count("completion_tokens")
+                        total = count("total_tokens")
+                        if total is None and prompt is not None and completion is not None:
+                            total = prompt + completion
+                        rows.append({
+                            "at": at, "listener": port, "status": status,
+                            "model": label("model"), "route": label("route"),
+                            "source_ip": label("source_ip"),
+                            "prompt_tokens": prompt, "completion_tokens": completion,
+                            "total_tokens": total, "duration_ms": count("duration_ms"),
+                        })
+            except FileNotFoundError:
+                continue
+            except OSError:
+                invalid_rows += 1
+        day += timedelta(days=1)
+    rows.sort(key=lambda row: row["at"], reverse=True)
+    return {"hours": hours, "rows": rows[:REQUEST_ROWS],
+            "files_found": files_found, "partial_files": partial_files,
+            "invalid_rows": invalid_rows, "dropped": dropped,
+            "shown": min(len(rows), REQUEST_ROWS),
+            "more_rows": max(0, len(rows) - REQUEST_ROWS),
+            "recorder_configured": files_found > 0}
 
 
 def read_json(url):
@@ -298,6 +388,7 @@ PAGE = r'''<!doctype html>
   .empty{font-size:13px;color:#93a6ba;padding-top:12px}.route{display:grid;grid-template-columns:1fr auto;gap:7px 10px;padding:9px 0;border-bottom:1px solid #25394e;font-size:13px}.route:last-child{border-bottom:0}
   .route small{display:block;color:#8497ab;font-size:11px;margin-top:3px}.route-state{font-size:11px;color:#8d9caf;font-weight:800;white-space:nowrap}.route-state.on{color:#8de2c5}
   table{border-collapse:collapse;width:100%;font-size:12px}th,td{text-align:left;padding:10px 5px;border-bottom:1px solid #263a50}th{color:#8fa2b7;font-weight:700}td{color:#d9e4ef;font-variant-numeric:tabular-nums}
+  .table-wrap{overflow:auto}.table-wrap table{min-width:880px}.request-note{margin:10px 0 14px;line-height:1.5}
   footer{color:#8193a8;font-size:12px;line-height:1.6;padding-top:6px}
   @media(max-width:950px){.grid{grid-template-columns:repeat(2,1fr)}.main{grid-template-columns:1fr}}
   @media(max-width:600px){.shell{padding:19px 14px}header{display:block}.head-actions{justify-content:flex-start;margin-top:17px}h1{font-size:27px}.grid{gap:8px}.card{padding:15px;min-height:118px}.value{font-size:29px}}
@@ -320,7 +411,8 @@ PAGE = r'''<!doctype html>
     <section class="panel"><h2>Open WebUI chat routes</h2><div class="small">A chat entry and its underlying model share the same memory. “Loaded” below means the base model appears in Ollama now.</div><div id="routes" style="margin-top:13px"></div></section>
     <section class="panel"><h2>GPU processes</h2><div id="processes" class="small">Waiting for process data</div></section>
   </div></div>
-  <footer>Live status refreshes every 3 seconds. While this server script runs, it saves one GPU sample per minute in seven daily JSON files, even if this browser tab is closed. It cannot recover time before recording began or gaps while the script was stopped. Idle expiry is the current Ollama timer; new requests can move it. GPU memory includes other processes and overhead, so it may differ from model VRAM totals. Press Ctrl+C in PowerShell to stop recording and the dashboard.</footer>
+  <section class="panel"><div class="panel-title"><h2>Recent Ollama requests</h2><div class="history-controls"><label>Range<select id="request-hours"><option value="1">Last hour</option><option value="24" selected>Last 24 hours</option><option value="168">Last 7 days</option></select></label><button id="request-refresh">Refresh</button></div></div><div class="small request-note" id="request-notice" role="status">Checking for request records. This dashboard reads records; it does not intercept requests.</div><div class="table-wrap"><table><thead><tr><th>Completed</th><th>Listener</th><th>Route</th><th>Model</th><th>Source IP</th><th>Status</th><th>Input</th><th>Output</th><th>Total</th><th>Duration</th></tr></thead><tbody id="request-rows"><tr><td colspan="10">Loading...</td></tr></tbody></table></div></section>
+  <footer>Live status refreshes every 3 seconds. While this server script runs, it saves one GPU sample per minute in seven daily JSON files, even if this browser tab is closed. It cannot recover time before recording began or gaps while the script was stopped. The request table needs a separate recorder on both Ollama listeners; missing records do not mean there were no requests. Idle expiry is the current Ollama timer; new requests can move it. GPU memory includes other processes and overhead, so it may differ from model VRAM totals. Press Ctrl+C in PowerShell to stop recording and the dashboard.</footer>
 </div>
 <script>
 const el=id=>document.getElementById(id);
@@ -443,7 +535,25 @@ async function refresh(){
   }catch(error){el('live-dot').className='dot bad';el('live-text').textContent='Connection lost';el('status').className='status error';el('status-title').textContent='Dashboard cannot refresh';el('status-detail').textContent=error.message;}
   finally{busy=false}
 }
-el('pause').onclick=()=>{paused=!paused;el('pause').textContent=paused?'Resume view':'Pause view';el('live-text').textContent=paused?'View paused · recording continues':'Live · 3s';if(!paused){refresh();loadHistory()}};
+let requestBusy=false;
+async function loadRequests(){
+  if(paused||requestBusy)return;requestBusy=true;
+  try{
+    const response=await fetch('/api/requests?hours='+encodeURIComponent(el('request-hours').value),{cache:'no-store'});
+    const data=await response.json();if(!response.ok)throw Error(data.error||'Request log read failed');
+    const issues=[];
+    if(!data.recorder_configured)issues.push('No Ollama recorder files found. Request capture is not running or has not produced files.');
+    else issues.push('Showing '+data.shown+' recent observed records; file presence does not prove complete capture.');
+    if(data.more_rows)issues.push(data.more_rows+' older rows omitted from this view.');
+    if(data.partial_files)issues.push(data.partial_files+' large file tails read only.');
+    if(data.dropped)issues.push(data.dropped+' requests reported dropped by recorder.');
+    if(data.invalid_rows)issues.push(data.invalid_rows+' invalid or unreadable records.');
+    el('request-notice').textContent=issues.join(' ');
+    el('request-rows').innerHTML=data.rows.length?data.rows.map(r=>'<tr><td>'+esc(new Date(r.at*1000).toLocaleString())+'</td><td>'+esc(r.listener)+'</td><td>'+esc(r.route)+'</td><td>'+esc(r.model)+'</td><td>'+esc(r.source_ip)+'</td><td>'+esc(r.status)+'</td><td>'+esc(r.prompt_tokens??'Not recorded')+'</td><td>'+esc(r.completion_tokens??'Not recorded')+'</td><td>'+esc(r.total_tokens??'Not recorded')+'</td><td>'+esc(r.duration_ms==null?'Not recorded':r.duration_ms+' ms')+'</td></tr>').join(''):'<tr><td colspan="10">No observed records in this range.</td></tr>';
+  }catch(error){el('request-notice').textContent='Could not read request logs: '+error.message}
+  finally{requestBusy=false}
+}
+el('pause').onclick=()=>{paused=!paused;el('pause').textContent=paused?'Resume view':'Pause view';el('live-text').textContent=paused?'View paused · recording continues':'Live · 3s';if(!paused){refresh();loadHistory();loadRequests()}};
 el('history-mode').onchange=()=>{updateHistoryControls();loadHistory()};
 el('history-unit').onchange=()=>{updateHistoryControls();loadHistory()};
 el('history-count').onchange=loadHistory;el('history-date').onchange=loadHistory;
@@ -453,7 +563,8 @@ el('copy').onclick=async()=>{
   try{await navigator.clipboard.writeText(text);el('copy').textContent='Copied';setTimeout(()=>el('copy').textContent='Copy snapshot',1800)}
   catch{el('copy').textContent='Copy blocked';setTimeout(()=>el('copy').textContent='Copy snapshot',1800)}
 };
-updateHistoryControls();refresh();loadHistory();setInterval(refresh,3000);setInterval(loadHistory,60000);
+el('request-hours').onchange=loadRequests;el('request-refresh').onclick=loadRequests;
+updateHistoryControls();refresh();loadHistory();loadRequests();setInterval(refresh,3000);setInterval(loadHistory,60000);setInterval(loadRequests,15000);
 setInterval(()=>{document.querySelectorAll('[data-expiry]').forEach(node=>node.textContent=expiry(node.dataset.expiry))},1000);
 </script></body></html>'''
 
@@ -487,6 +598,15 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/snapshot":
             return self.send(200, json.dumps(snapshot()),
                              "application/json; charset=utf-8")
+        if parsed.path == "/api/requests":
+            params = parse_qs(parsed.query)
+            try:
+                hours = int((params.get("hours") or ["24"])[0])
+                result = request_logs(hours)
+            except ValueError as error:
+                return self.send(400, json.dumps({"error": str(error)}),
+                                 "application/json; charset=utf-8")
+            return self.send(200, json.dumps(result), "application/json; charset=utf-8")
         if parsed.path == "/api/history":
             params = parse_qs(parsed.query)
             view = (params.get("view") or ["hours"])[0]
