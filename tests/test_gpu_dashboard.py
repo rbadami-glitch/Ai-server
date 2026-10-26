@@ -2,8 +2,10 @@
 
 import importlib.util
 import json
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -57,43 +59,35 @@ class HistoryTests(unittest.TestCase):
         )
         self.assertNotIn("github", str(MODULE.HISTORY_DIR).lower())
 
-    def test_request_logs_show_metadata_without_prompts_or_fake_token_counts(self):
-        directory = Path(self.temporary.name) / "requests"
-        directory.mkdir()
-        now = datetime(2026, 10, 22, 13, tzinfo=timezone.utc)
-        day = now.date().isoformat()
-        first = {"schema": 1, "at": int((now - timedelta(minutes=3)).timestamp()),
-                 "listener": "11434", "route": "/api/chat", "model": "gemma4:31b",
-                 "source_ip": "10.104.74.13", "status": 200,
-                 "prompt_tokens": 21, "completion_tokens": 3, "duration_ms": 1234,
-                 "prompt": "secret prompt", "authorization": "secret key"}
-        second = {"schema": 1, "at": int((now - timedelta(minutes=2)).timestamp()),
-                  "listener": "11435", "route": "/v1/chat/completions",
-                  "model": "llama4:latest", "source_ip": "127.0.0.1", "status": 500}
-        dropped = {"schema": 1, "kind": "dropped", "listener": "11434",
-                   "at": int(now.timestamp()), "dropped": 2}
-        (directory / f"ollama-11434-{day}.jsonl").write_text(
-            json.dumps(first) + "\n" + json.dumps(dropped) + "\n", encoding="utf-8")
-        (directory / f"ollama-11435-{day}.jsonl").write_text(
-            json.dumps(second) + "\n", encoding="utf-8")
-        result = MODULE.request_logs(1, directory, now)
-        self.assertEqual(result["files_found"], 2)
-        self.assertEqual(result["dropped"], 2)
-        self.assertEqual([row["model"] for row in result["rows"]],
-                         ["llama4:latest", "gemma4:31b"])
+    def test_openwebui_activity_reads_saved_metadata_without_chat_text(self):
+        path = Path(self.temporary.name) / "webui.db"
+        start = datetime(2026, 10, 22, 12, tzinfo=timezone.utc)
+        at = int((start + timedelta(minutes=5)).timestamp())
+        with closing(sqlite3.connect(path)) as db:
+            db.execute("CREATE TABLE chat_message (created_at INTEGER, role TEXT, model_id TEXT, usage TEXT, content TEXT)")
+            db.executemany("INSERT INTO chat_message VALUES (?,?,?,?,?)", [
+                (at, "user", "", None, "secret prompt"),
+                (at + 10, "assistant", "curtiss-wright-policies",
+                 json.dumps({"prompt_tokens": 12, "completion_tokens": 8}), "secret answer"),
+                ((at + 20) * 1000, "assistant", "devstral", None, "another secret answer"),
+            ])
+            db.commit()
+        result = MODULE.openwebui_activity(start, start + timedelta(hours=1), path)
+        self.assertTrue(result["available"])
+        self.assertEqual(len(result["rows"]), 3)
+        self.assertEqual(result["rows"][0]["at"], at + 20)
         self.assertIsNone(result["rows"][0]["total_tokens"])
-        self.assertEqual(result["rows"][1]["total_tokens"], 24)
-        self.assertEqual(result["rows"][1]["duration_ms"], 1234)
+        self.assertEqual(result["rows"][1]["model"], "curtiss-wright-policies")
+        self.assertEqual(result["rows"][1]["total_tokens"], 20)
         self.assertNotIn("secret", json.dumps(result))
 
-    def test_request_logs_missing_files_are_not_zero_request_proof(self):
-        directory = Path(self.temporary.name) / "missing"
-        result = MODULE.request_logs(24, directory,
-                                     datetime(2026, 10, 22, 13, tzinfo=timezone.utc))
-        self.assertFalse(result["recorder_configured"])
-        self.assertEqual(result["rows"], [])
+    def test_openwebui_activity_missing_database_and_invalid_range(self):
+        start = datetime(2026, 10, 22, 12, tzinfo=timezone.utc)
+        result = MODULE.openwebui_activity(start, start + timedelta(hours=1),
+                                           Path(self.temporary.name) / "missing.db")
+        self.assertFalse(result["available"])
         with self.assertRaises(ValueError):
-            MODULE.request_logs(2, directory)
+            MODULE.openwebui_activity(start, start + timedelta(days=8))
 
 
 if __name__ == "__main__":
