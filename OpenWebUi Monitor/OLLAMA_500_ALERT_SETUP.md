@@ -26,12 +26,13 @@ server only:
 - HTTPS access from the AI server to `https://api.resend.com`.
 
 Do not place a password in Git. Store the real configuration at
-`C:\ProgramData\CWAI\Ollama500Alert\config.json` on the AI server. The example
+`E:\AI\ollama\OpenWebUI-Monitoring\Ollama500Alert\config.json` on the AI server,
+outside the Git checkout. The example
 below uses placeholders and must be filled with approved values:
 
 ```json
 {
-  "resend_api_key_file": "C:\\ProgramData\\CWAI\\Ollama500Alert\\resend-api-key.txt",
+  "resend_api_key_file": "E:\\AI\\ollama\\OpenWebUI-Monitoring\\Ollama500Alert\\resend-api-key.txt",
   "sender": "ai-alerts@example.invalid",
   "recipients": ["operator@example.invalid"],
   "rearm_mode": "quiet",
@@ -61,7 +62,7 @@ the Git checkout. A separate send-only key for the AI server is preferable.
 
 The first monitor start records the current ends of recorder files. Earlier
 errors are not emailed. The state file at
-`C:\ProgramData\CWAI\Ollama500Alert\state.json` keeps the read position,
+`E:\AI\ollama\OpenWebUI-Monitoring\Ollama500Alert\state.json` keeps the read position,
 incident state, and unsent email across monitor restarts. If Resend fails, the
 monitor retries the pending alert no more often than once per minute. Check
 `alert.log` in the same directory for send failures. The log never records the

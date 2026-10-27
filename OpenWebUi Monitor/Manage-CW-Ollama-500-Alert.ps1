@@ -1,6 +1,6 @@
 <#
 Run on the AI server in elevated Windows PowerShell after mail settings have
-been placed in C:\ProgramData\CWAI\Ollama500Alert\config.json.
+been placed in E:\AI\ollama\OpenWebUI-Monitoring\Ollama500Alert\config.json.
 This task reads recorder metadata; it does not restart Ollama or Open WebUI.
 #>
 param(
@@ -13,8 +13,8 @@ $ErrorActionPreference = 'Stop'
 $taskName = 'CWAI-Ollama-500-Alert'
 $scriptPath = Join-Path $PSScriptRoot 'ollama_500_alert.py'
 $expectedPath = 'E:\AI\ollama\OpenWebUI-Monitoring\github\OpenWebUi Monitor\ollama_500_alert.py'
-$configPath = 'C:\ProgramData\CWAI\Ollama500Alert\config.json'
-$statePath = 'C:\ProgramData\CWAI\Ollama500Alert\state.json'
+$configPath = 'E:\AI\ollama\OpenWebUI-Monitoring\Ollama500Alert\config.json'
+$statePath = 'E:\AI\ollama\OpenWebUI-Monitoring\Ollama500Alert\state.json'
 
 function Get-AlertTask {
     Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue

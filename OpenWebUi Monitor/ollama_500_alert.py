@@ -22,7 +22,7 @@ from direct_usage import PORTS, _caller_label, _event
 
 
 DEFAULT_RECORDER_DIR = Path(r"E:\AI\ollama\OpenWebUI-Monitoring\Direct-Usage")
-DEFAULT_CONFIG = Path(r"C:\ProgramData\CWAI\Ollama500Alert\config.json")
+DEFAULT_CONFIG = Path(r"E:\AI\ollama\OpenWebUI-Monitoring\Ollama500Alert\config.json")
 MAX_LINE_BYTES = 8192
 POLL_SECONDS = 2
 
