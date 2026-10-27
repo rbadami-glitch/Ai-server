@@ -13,7 +13,10 @@ from datetime import datetime, timedelta, timezone
 PORTS = ("11434", "11435")
 CALLER_LABELS = {
     ("11434", "10.104.74.10", "/v1/chat/completions"): "Open WebUI",
+    ("11434", "10.104.74.10", "/api/chat"): "AI server (local)",
     ("11434", "10.104.74.13", "/api/chat"): "LiteLLM",
+    ("11434", "10.104.74.21", "/v1/chat/completions"): "PCB server",
+    ("11434", "10.104.74.21", "/api/chat"): "PCB server",
     ("11435", "127.0.0.1", "/v1/chat/completions"): "Open WebUI",
 }
 PROBE_MODEL_PREFIX = "cw-recorder-probe-"

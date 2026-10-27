@@ -79,6 +79,15 @@ class DirectUsageTests(unittest.TestCase):
             {"schema": 1, "at": self.recent + 2, "listener": "11434",
              "model": "gemma4:31b", "source_ip": "10.104.74.10",
              "route": "/api/chat", "status": 200},
+            {"schema": 1, "at": self.recent + 3, "listener": "11434",
+             "model": "gemma4:31b", "source_ip": "10.104.74.21",
+             "route": "/v1/chat/completions", "status": 200},
+            {"schema": 1, "at": self.recent + 4, "listener": "11434",
+             "model": "gemma4:31b", "source_ip": "10.104.74.21",
+             "route": "/api/chat", "status": 200},
+            {"schema": 1, "at": self.recent + 5, "listener": "11434",
+             "model": "gemma4:31b", "source_ip": "192.0.2.99",
+             "route": "/api/chat", "status": 200},
         ])
         data = self._read()
         labels = {(row["source_ip"], row["route"]): row["caller_name"]
@@ -86,8 +95,12 @@ class DirectUsageTests(unittest.TestCase):
         self.assertEqual(labels[("10.104.74.10", "/v1/chat/completions")],
                          "Open WebUI")
         self.assertEqual(labels[("10.104.74.13", "/api/chat")], "LiteLLM")
-        self.assertEqual(labels[("10.104.74.10", "/api/chat")], "Unidentified")
-        self.assertEqual(data["source_ip_count"], 3)  # Includes the private 127.0.0.1 record.
+        self.assertEqual(labels[("10.104.74.10", "/api/chat")], "AI server (local)")
+        self.assertEqual(labels[("10.104.74.21", "/v1/chat/completions")],
+                         "PCB server")
+        self.assertEqual(labels[("10.104.74.21", "/api/chat")], "PCB server")
+        self.assertEqual(labels[("192.0.2.99", "/api/chat")], "Unidentified")
+        self.assertEqual(data["source_ip_count"], 5)  # Includes the private 127.0.0.1 record.
         self.assertTrue(any(row["caller_name"] == "Open WebUI"
                             for row in data["callers"]))
 
