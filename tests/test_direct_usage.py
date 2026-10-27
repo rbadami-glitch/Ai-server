@@ -68,6 +68,29 @@ class DirectUsageTests(unittest.TestCase):
         self.assertNotIn("must never appear", json.dumps(data))
         self.assertTrue(data["complete"])
 
+    def test_known_callers_are_named_and_other_traffic_is_unidentified(self):
+        self._write(self.general, [
+            {"schema": 1, "at": self.recent, "listener": "11434",
+             "model": "gemma4:31b", "source_ip": "10.104.74.10",
+             "route": "/v1/chat/completions", "status": 200},
+            {"schema": 1, "at": self.recent + 1, "listener": "11434",
+             "model": "gemma4:31b", "source_ip": "10.104.74.13",
+             "route": "/api/chat", "status": 200},
+            {"schema": 1, "at": self.recent + 2, "listener": "11434",
+             "model": "gemma4:31b", "source_ip": "10.104.74.10",
+             "route": "/api/chat", "status": 200},
+        ])
+        data = self._read()
+        labels = {(row["source_ip"], row["route"]): row["caller_name"]
+                  for row in data["recent"]}
+        self.assertEqual(labels[("10.104.74.10", "/v1/chat/completions")],
+                         "Open WebUI")
+        self.assertEqual(labels[("10.104.74.13", "/api/chat")], "LiteLLM")
+        self.assertEqual(labels[("10.104.74.10", "/api/chat")], "Unidentified")
+        self.assertEqual(data["source_ip_count"], 3)  # Includes the private 127.0.0.1 record.
+        self.assertTrue(any(row["caller_name"] == "Open WebUI"
+                            for row in data["callers"]))
+
     def test_selected_window_and_invalid_record_are_explicit(self):
         self.assertEqual(self._read("minutes", 10)["totals"]["requests"], 0)
         self.assertEqual(self._read("week", None)["totals"]["requests"], 3)
