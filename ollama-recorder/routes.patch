@@ -1,0 +1,148 @@
+diff --git a/server/routes.go b/server/routes.go
+index f8d06b7..8e130bc 100644
+--- a/server/routes.go
++++ b/server/routes.go
+@@ -263,6 +263,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
+ 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+ 		return
+ 	}
++	if activeDirectUsageRecorder != nil {
++		c.Set(directUsageModelKey, req.Model)
++	}
+ 
+ 	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
+ 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
+@@ -745,6 +748,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
+ 		r.Logprobs = allLogprobs
+ 
+ 		c.JSON(http.StatusOK, r)
++		if activeDirectUsageRecorder != nil && r.Done {
++			c.Set(directUsageMetricsKey, r.Metrics)
++		}
+ 		return
+ 	}
+ 
+@@ -763,6 +769,9 @@ func (s *Server) EmbedHandler(c *gin.Context) {
+ 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+ 		return
+ 	}
++	if activeDirectUsageRecorder != nil {
++		c.Set(directUsageModelKey, req.Model)
++	}
+ 
+ 	modelRef, err := parseAndValidateModelRef(req.Model)
+ 	if err != nil {
+@@ -974,6 +983,9 @@ func (s *Server) EmbedHandler(c *gin.Context) {
+ 		PromptEvalCount: int(totalTokens),
+ 	}
+ 	c.JSON(http.StatusOK, resp)
++	if activeDirectUsageRecorder != nil && resp.PromptEvalCount > 0 {
++		c.Set(directUsageEmbedCountKey, resp.PromptEvalCount)
++	}
+ }
+ 
+ func normalize(vec []float32) ([]float32, error) {
+@@ -1001,6 +1013,9 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
+ 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+ 		return
+ 	}
++	if activeDirectUsageRecorder != nil {
++		c.Set(directUsageModelKey, req.Model)
++	}
+ 
+ 	modelRef, err := parseAndValidateModelRef(req.Model)
+ 	if err != nil {
+@@ -1028,7 +1043,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
+ 		return
+ 	}
+ 
+-	embedding, _, err := r.Embedding(c.Request.Context(), req.Prompt)
++	embedding, tokenCount, err := r.Embedding(c.Request.Context(), req.Prompt)
+ 	if err != nil {
+ 		s.sched.expireRunnersForRuntimeOOM(m, err)
+ 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
+@@ -1044,6 +1059,9 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
+ 		Embedding: e,
+ 	}
+ 	c.JSON(http.StatusOK, resp)
++	if activeDirectUsageRecorder != nil && tokenCount > 0 {
++		c.Set(directUsageEmbedCountKey, tokenCount)
++	}
+ }
+ 
+ func (s *Server) PullHandler(c *gin.Context) {
+@@ -1825,6 +1843,9 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
+ 		cors.New(corsConfig),
+ 		allowedHostsMiddleware(s.addr),
+ 	)
++	if activeDirectUsageRecorder != nil {
++		r.Use(s.directUsageMiddleware())
++	}
+ 
+ 	// General
+ 	r.HEAD("/", func(c *gin.Context) { c.String(http.StatusOK, "Ollama is running") })
+@@ -1915,6 +1936,9 @@ func (s *Server) ModelRecommendationsExperimentalHandler(c *gin.Context) {
+ }
+ 
+ func Serve(ln net.Listener) error {
++	if activeDirectUsageRecorder != nil {
++		defer activeDirectUsageRecorder.shutdown()
++	}
+ 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
+ 	slog.Info("server config", "env", envconfig.Values())
+ 	cloudDisabled, _ := internalcloud.Status()
+@@ -2069,6 +2093,7 @@ func waitForStream(c *gin.Context, ch chan any) {
+ 
+ func streamResponse(c *gin.Context, ch chan any) {
+ 	c.Header("Content-Type", "application/x-ndjson")
++	var finalMetrics *api.Metrics
+ 	c.Stream(func(w io.Writer) bool {
+ 		val, ok := <-ch
+ 		if !ok {
+@@ -2111,9 +2136,26 @@ func streamResponse(c *gin.Context, ch chan any) {
+ 			slog.Info(fmt.Sprintf("streamResponse: w.Write failed with %s", err))
+ 			return false
+ 		}
++		if activeDirectUsageRecorder != nil {
++			switch response := val.(type) {
++			case api.ChatResponse:
++				if response.Done {
++					metrics := response.Metrics
++					finalMetrics = &metrics
++				}
++			case api.GenerateResponse:
++				if response.Done {
++					metrics := response.Metrics
++					finalMetrics = &metrics
++				}
++			}
++		}
+ 
+ 		return true
+ 	})
++	if finalMetrics != nil {
++		c.Set(directUsageMetricsKey, *finalMetrics)
++	}
+ }
+ 
+ func (s *Server) StatusHandler(c *gin.Context) {
+@@ -2413,6 +2455,9 @@ func writeChatResponse(c *gin.Context, req api.ChatRequest, ch chan any) {
+ 		}
+ 
+ 		c.JSON(http.StatusOK, resp)
++		if activeDirectUsageRecorder != nil && resp.Done {
++			c.Set(directUsageMetricsKey, resp.Metrics)
++		}
+ 		return
+ 	}
+ 
+@@ -2430,6 +2475,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
+ 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+ 		return
+ 	}
++	if activeDirectUsageRecorder != nil {
++		c.Set(directUsageModelKey, req.Model)
++	}
+ 
+ 	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
+ 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})

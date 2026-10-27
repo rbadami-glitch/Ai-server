@@ -18,6 +18,8 @@ The proposed recorder file names are `ollama-11434-YYYY-MM-DD.jsonl` and `ollama
 
 This is a local source change until pushed to the private repository, pulled on the AI server, and the feedback dashboard task restarted. The original `ollama.exe`, its NSSM service settings, all server data, and the running dashboards have not been changed. A separate instrumented Ollama 0.30.6 executable must be built and tested before the page can show private-service requests and model/token counts. The production cutover and rollback require a separate review and explicit approval.
 
+The manually triggered Windows candidate build and the production review steps are in [`ollama-recorder/BUILD_AND_CUTOVER.md`](ollama-recorder/BUILD_AND_CUTOVER.md). Building an artifact alone does not deploy it or restart a service.
+
 ## Open WebUI feedback and chat usage
 
 The dashboard reads Open WebUI's SQLite database in read-only mode. It prints a fresh local access-key URL when started; keep that URL private. Two navigation buttons open **Feedback data** and **Usage data** in the same local dashboard. Usage data is a separate `/usage` page with the same custom minutes/hours, selected-day, and last-seven-days controls as the GPU dashboard. It refreshes every 15 seconds and reads saved `chat_message` rows; it does not create seven new history files because the database already contains the dated records.

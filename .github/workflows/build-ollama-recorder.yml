@@ -1,0 +1,81 @@
+name: Build Ollama request recorder
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-amd64:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      CGO_ENABLED: '1'
+    steps:
+      - name: Check out private recorder source
+        uses: actions/checkout@v4
+        with:
+          path: monitoring
+          persist-credentials: false
+
+      - name: Check out pinned Ollama 0.30.6 source
+        uses: actions/checkout@v4
+        with:
+          repository: ollama/ollama
+          ref: 87cff95af86a1d8be1d81ce75fafc9bb4e67d002
+          path: ollama-source
+          persist-credentials: false
+
+      - name: Set up Go required by Ollama
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ollama-source/go.mod
+          cache-dependency-path: ollama-source/go.sum
+
+      - name: Apply the metadata-only recorder
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $upstream = Join-Path $env:GITHUB_WORKSPACE 'ollama-source'
+          $recorder = Join-Path $env:GITHUB_WORKSPACE 'monitoring\ollama-recorder'
+          $actual = (git -C $upstream rev-parse HEAD).Trim()
+          if ($actual -ne '87cff95af86a1d8be1d81ce75fafc9bb4e67d002') {
+            throw "Unexpected Ollama source commit: $actual"
+          }
+          Copy-Item -LiteralPath (Join-Path $recorder 'direct_usage.go') -Destination (Join-Path $upstream 'server\direct_usage.go')
+          Copy-Item -LiteralPath (Join-Path $recorder 'direct_usage_test.go') -Destination (Join-Path $upstream 'server\direct_usage_test.go')
+          git -C $upstream apply --check (Join-Path $recorder 'routes.patch')
+          if ($LASTEXITCODE -ne 0) { throw 'Recorder patch does not apply.' }
+          git -C $upstream apply (Join-Path $recorder 'routes.patch')
+          if ($LASTEXITCODE -ne 0) { throw 'Recorder patch failed.' }
+          git -C $upstream diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Patched source has whitespace errors.' }
+
+      - name: Test recorder without models or services
+        shell: pwsh
+        working-directory: ollama-source
+        run: |
+          go test ./server -run '^TestDirectUsage' -count=1
+          if ($LASTEXITCODE -ne 0) { throw 'Recorder tests failed.' }
+
+      - name: Build instrumented Ollama executable
+        shell: pwsh
+        working-directory: ollama-source
+        run: |
+          go build -trimpath -ldflags '-s -w -X=github.com/ollama/ollama/version.Version=0.30.6 -X=github.com/ollama/ollama/server.mode=release' -o "$env:RUNNER_TEMP\ollama-direct-usage.exe" .
+          if ($LASTEXITCODE -ne 0) { throw 'Ollama build failed.' }
+          & "$env:RUNNER_TEMP\ollama-direct-usage.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw 'Built executable did not start.' }
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath "$env:RUNNER_TEMP\ollama-direct-usage.exe").Hash
+          @("Ollama source: 87cff95af86a1d8be1d81ce75fafc9bb4e67d002", "Recorder source: $env:GITHUB_SHA", "SHA256: $hash") |
+            Set-Content -Encoding Ascii -LiteralPath "$env:RUNNER_TEMP\BUILD.txt"
+
+      - name: Save candidate for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: ollama-direct-usage-windows-amd64
+          path: |
+            ${{ runner.temp }}\ollama-direct-usage.exe
+            ${{ runner.temp }}\BUILD.txt
+          retention-days: 7
