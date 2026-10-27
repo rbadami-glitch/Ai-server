@@ -65,10 +65,23 @@ jobs:
         run: |
           go build -trimpath -ldflags '-s -w -X=github.com/ollama/ollama/version.Version=0.30.6 -X=github.com/ollama/ollama/server.mode=release' -o "$env:RUNNER_TEMP\ollama-direct-usage.exe" .
           if ($LASTEXITCODE -ne 0) { throw 'Ollama build failed.' }
-          & "$env:RUNNER_TEMP\ollama-direct-usage.exe" --version
-          if ($LASTEXITCODE -ne 0) { throw 'Built executable did not start.' }
+          $winpthread = (& gcc -print-file-name=libwinpthread-1.dll).Trim()
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $winpthread -PathType Leaf)) {
+            throw "Could not locate the MinGW runtime DLL: $winpthread"
+          }
+          Copy-Item -LiteralPath $winpthread -Destination "$env:RUNNER_TEMP\libwinpthread-1.dll"
+          $savedPath = $env:PATH
+          try {
+            # The DLL must be supplied by the artifact, not found accidentally in the runner's tool PATH.
+            $env:PATH = "$(Join-Path $env:SystemRoot 'System32');$env:SystemRoot"
+            & "$env:RUNNER_TEMP\ollama-direct-usage.exe" --version
+            if ($LASTEXITCODE -ne 0) { throw 'Built executable did not start with only the packaged runtime DLL.' }
+          } finally {
+            $env:PATH = $savedPath
+          }
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath "$env:RUNNER_TEMP\ollama-direct-usage.exe").Hash
-          @("Ollama source: 87cff95af86a1d8be1d81ce75fafc9bb4e67d002", "Recorder source: $env:GITHUB_SHA", "SHA256: $hash") |
+          $dllHash = (Get-FileHash -Algorithm SHA256 -LiteralPath "$env:RUNNER_TEMP\libwinpthread-1.dll").Hash
+          @("Ollama source: 87cff95af86a1d8be1d81ce75fafc9bb4e67d002", "Recorder source: $env:GITHUB_SHA", "SHA256 exe: $hash", "SHA256 libwinpthread-1.dll: $dllHash") |
             Set-Content -Encoding Ascii -LiteralPath "$env:RUNNER_TEMP\BUILD.txt"
 
       - name: Save candidate for review
@@ -77,5 +90,6 @@ jobs:
           name: ollama-direct-usage-windows-amd64
           path: |
             ${{ runner.temp }}\ollama-direct-usage.exe
+            ${{ runner.temp }}\libwinpthread-1.dll
             ${{ runner.temp }}\BUILD.txt
           retention-days: 7

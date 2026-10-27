@@ -6,7 +6,7 @@ This plan is for the two existing Windows Ollama services on the AI server. It d
 
 1. Run the private repository's **Build Ollama request recorder** workflow manually. It checks out Ollama source commit `87cff95af86a1d8be1d81ce75fafc9bb4e67d002` (tag `v0.30.6`), copies these two recorder files, applies `routes.patch`, runs the synthetic recorder tests, and builds a Windows amd64 `ollama-direct-usage.exe`.
 2. Download the workflow artifact. Check that its `BUILD.txt` source commit and SHA-256 match the executable. Preserve the artifact outside the Git checkout. The workflow uploads no AI-server data.
-3. The build succeeding is only a candidate. Run #2 at recorder commit `df88217` produced a 35,371,520-byte executable whose SHA-256 is `D15A734F98260D366752B361031DC6C998AAA58CE16433B4ED6ABDFCF136B8B1`. The downloaded ZIP passed its integrity check and matched `BUILD.txt`. The candidate is unsigned; compatibility and local execution policy must be checked on the AI server before any service change.
+3. The build succeeding is only a candidate. Run #2 at recorder commit `df88217` produced a 35,371,520-byte executable whose SHA-256 is `D15A734F98260D366752B361031DC6C998AAA58CE16433B4ED6ABDFCF136B8B1`. The downloaded ZIP passed its integrity check and matched `BUILD.txt`, but the executable exited on the AI server with `0xC0000135` before printing its version. Its Windows import table includes `libwinpthread-1.dll`, which was present on the GitHub runner but not packaged. Do not deploy run #2. The revised workflow packages that DLL, records both file hashes, and checks that the executable starts with the toolchain removed from `PATH`. Verify the new artifact on the AI server before any service change. The candidate remains unsigned; compatibility and local execution policy must still be checked.
 
 ## Read-only AI-server preflight
 
@@ -22,7 +22,7 @@ Do not change permissions as part of this preflight. If the directory's access c
 
 ## Proposed production cutover, one service at a time
 
-Transfer the artifact to the AI server through an approved local file-transfer path, verify its SHA-256 there, and stage it as `ollama-direct-usage.exe` **beside** the installed signed `ollama.exe`. Ollama 0.30.6 finds native runner files relative to the executable, so the side-by-side location preserves the installed `lib\ollama` tree. Do not replace or rename the signed original. Verify the candidate's `--version` there before any service edit. If the unsigned candidate is blocked, stop the pilot.
+Transfer the artifact to the AI server through an approved local file-transfer path, verify both executable and runtime-DLL SHA-256 values there, and stage `ollama-direct-usage.exe` and `libwinpthread-1.dll` **beside** the installed signed `ollama.exe`. Ollama 0.30.6 finds native runner files relative to the executable, so the side-by-side location preserves the installed `lib\ollama` tree. Do not replace or rename the signed original. Verify the candidate's `--version` there before any service edit. If the unsigned candidate is blocked or fails to start, stop the pilot.
 
 During a quiet period, save the exact original NSSM `Application`, `AppDirectory`, parameters, and service-specific environment for both services in a private backup **outside** the Git checkout. The recorder is off by default; only `OLLAMA_DIRECT_USAGE_DIR` enables it.
 
