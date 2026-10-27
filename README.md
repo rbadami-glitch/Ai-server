@@ -6,6 +6,17 @@ This folder is for **source code only**. Its local Git `origin` is the approved 
 | --- | --- |
 | `GPU usage/CW-GPU-Dashboard.py` | Local-only GPU/Ollama dashboard on `127.0.0.1:8791`; live status every 3 seconds, a GPU history sample every minute, custom minute/hour graph range, selected day, and last 7 days. |
 | `OpenWebUi Monitor/OpenWebUI-Feedback-Dashboard.py` | Local-only Open WebUI feedback dashboard on `127.0.0.1:8789`, with a separate chat-usage page. Review its database path, permissions, and access configuration before deployment. |
+| `OpenWebUi Monitor/direct_usage.py` | Third dashboard page that reads the general Ollama service's existing access logs, or metadata-only JSONL records if a recorder is later deployed. |
+
+## Local direct Ollama usage prototype (not deployed)
+
+The feedback dashboard now has an **Ollama request usage** page at `/direct-usage`. Without a recorder, it reads the last 8 MiB of each existing general-service access log at `E:\AI\ollama\logs\ollama-service.log` and `ollama-service-error.log`. The 27 October `/api/tags` check confirmed a real Gin access entry from the general service. The page shows observed **POST inference requests** on `11434`, with time, route, HTTP status, and source IP. These access lines do not contain model or token counts, so those fields appear as unrecorded. They do not cover the private `11435` service, and truncated or rotated logs can omit earlier requests. A proxy may make the source IP appear local. No prompt or response text is displayed.
+
+If recorder files are present for `11434`, the page uses them instead of that service's access logs to avoid double counting. It also reads any recorder files for `11435`. Files are supplied with `--direct-usage-dir` (default `E:\AI\ollama\OpenWebUI-Monitoring\Direct-Usage` on the AI server). The dashboard does not create that folder or collect requests itself. No recorder is deployed yet, so the page cannot show private-service requests or model and token details from direct Ollama traffic today.
+
+The proposed recorder file names are `ollama-11434-YYYY-MM-DD.jsonl` and `ollama-11435-YYYY-MM-DD.jsonl`, using UTC dates. Each line is one JSON object with schema version 1 and these fields: `at` (Unix seconds), `listener`, `route`, `model`, `source_ip`, `status`, `prompt_tokens`, `completion_tokens`, and optional `total_tokens`. Token fields may be null. No prompt, response, API key, or authorization header belongs in these files. The dashboard groups observed records by the same minute/hour/day/week controls as the Open WebUI usage page and marks missing counts as unrecorded. A source IP is not a person's name; forwarding through a local proxy can make the source appear as `127.0.0.1`.
+
+This is a local source change until pushed to the private repository, pulled on the AI server, and the feedback dashboard task restarted. The original `ollama.exe`, its NSSM service settings, all server data, and the running dashboards have not been changed. A separate instrumented Ollama 0.30.6 executable must be built and tested before the page can show private-service requests and model/token counts. The production cutover and rollback require a separate review and explicit approval.
 
 ## Open WebUI feedback and chat usage
 

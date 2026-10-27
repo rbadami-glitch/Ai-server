@@ -21,8 +21,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from direct_usage import DIRECT_USAGE_HTML, read_direct_usage
+
 
 DEFAULT_DATABASE = Path(r"C:\downloads\open-webui\data\webui.db")
+DEFAULT_DIRECT_USAGE_DIR = Path(r"E:\AI\ollama\OpenWebUI-Monitoring\Direct-Usage")
+DEFAULT_OLLAMA_ACCESS_LOGS = (
+    Path(r"E:\AI\ollama\logs\ollama-service.log"),
+    Path(r"E:\AI\ollama\logs\ollama-service-error.log"),
+)
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8789
 MAX_PREVIEW = 20000
@@ -520,7 +527,7 @@ input[type=number]{width:95px}button{cursor:pointer}a:focus-visible,button:focus
 @media(max-width:950px){.cards{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}}@media(max-width:520px){main{padding:20px 13px}.cards{grid-template-columns:1fr 1fr}.value{font-size:22px}.top{display:block}}
 </style></head><body><main>
 <div class="top"><div><div class="muted">Open WebUI · Monitoring</div><h1>Usage data</h1><div class="muted">Saved chat activity and recorded token usage, refreshed every 15 seconds.</div></div></div>
-<nav class="tabs" aria-label="Dashboard pages"><a id="feedback-link" href="#">Feedback data</a><a class="active" aria-current="page" href="#">Usage data</a></nav>
+<nav class="tabs" aria-label="Dashboard pages"><a id="feedback-link" href="#">Feedback data</a><a class="active" aria-current="page" href="#">Usage data</a><a id="direct-link" href="#">Ollama requests</a></nav>
 <div class="notice">These are saved chat messages, not a count of all HTTP/API requests to Open WebUI. Token totals are incomplete whenever a response has no saved usage data. No message text is shown here.</div>
 <div class="controls"><label>Range<select id="mode"><option value="range">Last N minutes or hours</option><option value="day">Selected day</option><option value="week">Last 7 days</option></select></label><label id="amount-box">Amount<input id="amount" type="number" min="1" max="168" value="2"></label><label id="unit-box">Unit<select id="unit"><option value="hours">Hours</option><option value="minutes">Minutes</option></select></label><label id="day-box" hidden>Day<input id="day" type="date"></label><button id="refresh">Refresh</button><span id="updated" class="muted">Loading…</span></div>
 <div class="cards"><div class="card"><div class="label">Chat prompts</div><div class="value" id="prompts">—</div><div class="hint">Saved user messages; not HTTP requests</div></div><div class="card"><div class="label">Assistant responses</div><div class="value" id="responses">—</div><div class="hint">Saved assistant messages</div></div><div class="card"><div class="label">Active users / chats</div><div class="value" id="active">—</div><div class="hint">Distinct IDs in selected period</div></div><div class="card"><div class="label">Recorded total tokens</div><div class="value" id="tokens">—</div><div class="hint" id="coverage">Only responses with saved counts</div></div></div>
@@ -533,7 +540,7 @@ input[type=number]{width:95px}button{cursor:pointer}a:focus-visible,button:focus
 const key=new URLSearchParams(location.search).get('key')||'';
 const $=id=>document.getElementById(id),fmt=n=>Number(n).toLocaleString(),stamp=n=>new Date(n*1000).toLocaleString();
 const node=(tag,value)=>{const item=document.createElement(tag);item.textContent=value;return item};
-$('feedback-link').href='/?key='+encodeURIComponent(key);
+$('feedback-link').href='/?key='+encodeURIComponent(key);$('direct-link').href='/direct-usage?key='+encodeURIComponent(key);
 function controls(){const mode=$('mode').value,range=mode==='range';$('amount-box').hidden=!range;$('unit-box').hidden=!range;$('day-box').hidden=mode!=='day';$('amount').max=$('unit').value==='minutes'?10080:168;if(+$('amount').value>+$('amount').max)$('amount').value=$('amount').max}
 function draw(rootId,points,field,start,end,scaleId,startId,endId){const root=$(rootId);root.replaceChildren();const max=Math.max(0,...points.map(x=>x[field]));for(const item of points){const bar=node('div','');bar.className='bar';bar.style.height=(item[field]===0?0:Math.max(2,item[field]/max*195))+'px';bar.title=stamp(item.at)+' · '+fmt(item[field]);root.append(bar)}$(scaleId).textContent='Peak '+fmt(max)+' / bucket';$(startId).textContent=new Date(start).toLocaleString();$(endId).textContent=new Date(end).toLocaleString()}
 function rows(rootId,items,columns){const root=$(rootId);root.replaceChildren();if(!items.length){const row=node('tr',''),cell=node('td','No saved activity in this period.');cell.colSpan=columns.length;row.append(cell);root.append(row);return}for(const item of items){const row=node('tr','');for(const column of columns)row.append(node('td',column(item)));root.append(row)}}
@@ -602,14 +609,14 @@ h1{font-size:31px;margin:8px 0 6px;letter-spacing:-.035em}h2{font-size:16px;marg
 @media(max-width:1040px){.shell{grid-template-columns:1fr}.rail{display:none}main{padding:22px 18px 45px}.cards{grid-template-columns:repeat(2,1fr)}}@media(max-width:680px){.grid{grid-template-columns:1fr}.cards{gap:8px}.card{padding:13px}.value{font-size:25px}.top{align-items:flex-start}h1{font-size:25px}.top-right{font-size:11px}.table th:nth-child(4),.table td:nth-child(4){display:none}}
 </style></head>
 <body><div class="shell"><aside class="rail"><div class="brand"><span class="mark">↗</span><span>Open WebUI<br>Observatory</span></div><div class="rail-note">Workspace</div><div class="privacy"><strong>Private by design</strong>Reads the local Open WebUI database. No cloud service, model call, or database write.</div></aside>
-<main><nav class="page-tabs" aria-label="Dashboard pages"><a class="active" aria-current="page" href="#">Feedback data</a><a id="usage-link" href="#">Usage data</a></nav><div class="top"><div><div class="eyebrow">Open WebUI · Quality monitoring</div><h1>Feedback data</h1><div class="sub">Live ratings and a review queue for model responses.</div></div><div class="top-right"><div class="live"><span class="dot"></span><span id="live">Connecting…</span></div><button class="refresh" id="refresh">↻ &nbsp; Refresh</button></div></div>
+<main><nav class="page-tabs" aria-label="Dashboard pages"><a class="active" aria-current="page" href="#">Feedback data</a><a id="usage-link" href="#">Usage data</a><a id="direct-link" href="#">Ollama requests</a></nav><div class="top"><div><div class="eyebrow">Open WebUI · Quality monitoring</div><h1>Feedback data</h1><div class="sub">Live ratings and a review queue for model responses.</div></div><div class="top-right"><div class="live"><span class="dot"></span><span id="live">Connecting…</span></div><button class="refresh" id="refresh">↻ &nbsp; Refresh</button></div></div>
 <div class="cards"><div class="card"><div class="label">Rated responses</div><div class="value neutral" id="total">—</div><div class="hint">Only responses with a thumb rating</div></div><div class="card"><div class="label">Thumbs up</div><div class="value good" id="up">—</div><div class="hint" id="upHint">Positive ratings</div></div><div class="card"><div class="label">Thumbs down</div><div class="value bad" id="down">—</div><div class="hint" id="downHint">Needs investigation</div></div><div class="card"><div class="label">Downvote share</div><div class="value" id="share">—</div><div class="hint">Downvotes ÷ rated responses, not all chats</div></div></div>
 <div class="grid"><section class="panel"><div class="panel-head"><h2>Rating trend</h2><span class="muted">Last 14 days</span></div><div class="bars" id="chart"></div><div class="chart-labels"><span id="dateStart"></span><span id="dateEnd"></span></div><div class="legend"><span><i style="background:#4bcda8"></i>Thumbs up</span><span><i style="background:#fa817d"></i>Thumbs down</span></div></section><section class="panel"><div class="panel-head"><h2>Models with feedback</h2><span class="muted">By rated responses</span></div><div id="models"></div></section></div>
 <section class="panel feed"><div class="panel-head"><div><h2>Feedback review queue</h2><div class="sub">Click a row to inspect its saved question and answer, when available.</div></div><span class="muted" id="shown"></span></div><div class="controls"><input id="search" type="search" placeholder="Search model, user, reason or comment" aria-label="Search feedback"><select id="modelFilter" aria-label="Model"><option value="">All models</option></select><select id="ratingFilter" aria-label="Rating"><option value="">All ratings</option><option value="-1">Thumbs down</option><option value="1">Thumbs up</option></select><select id="daysFilter" aria-label="Period"><option value="30">Last 30 days</option><option value="7">Last 7 days</option><option value="0">All time</option></select></div><div class="table-wrap"><table class="table"><thead><tr><th>Rating</th><th>Model</th><th>Reason / comment</th><th>User</th><th>Date</th></tr></thead><tbody id="rows"></tbody></table></div><div class="empty" id="empty" hidden>No feedback matches these filters.</div><div class="status" id="status"></div></section></main></div>
 <div class="overlay" id="overlay" role="dialog" aria-modal="true" aria-label="Feedback details"><div class="drawer"><div class="drawer-top"><div><div class="eyebrow">Feedback details</div><h1 id="detailTitle">Response</h1></div><button class="close" id="close" aria-label="Close details">✕</button></div><div class="detail-meta" id="detailMeta"></div><div class="section-label">Saved chat details</div><div class="facts" id="facts"></div><div class="section-label">User question</div><div class="text-box" id="question">Loading…</div><div class="section-label">Model answer</div><div class="text-box" id="answer">Loading…</div><div class="section-label">User reason / comment</div><div class="text-box" id="reason">—</div><div class="section-label">Other feedback details</div><div class="text-box" id="extraDetails">—</div><div class="section-label">Saved error / status events</div><div class="text-box" id="errorInfo">—</div><div class="warning">Your database has no dedicated HTTP-status column, and the audit found no explicit HTTP-status field in rated snapshots. If an individual message saved a code inside an error, it appears above; otherwise it is not recorded. A completed answer does not prove HTTP 200. This read-only view includes rated responses only. Do not share company chat snapshots or screenshots without approval.</div></div></div>
 <script>
 const key=new URLSearchParams(location.search).get('key')||'';
-document.getElementById('usage-link').href='/usage?key='+encodeURIComponent(key);
+document.getElementById('usage-link').href='/usage?key='+encodeURIComponent(key);document.getElementById('direct-link').href='/direct-usage?key='+encodeURIComponent(key);
 let all=[],lastFocus=null;
 const $=id=>document.getElementById(id);
 const fmt=n=>Number(n).toLocaleString();
@@ -631,7 +638,8 @@ $('refresh').onclick=load;$('close').onclick=closeDetail;$('overlay').onclick=e=
 </script></body></html>'''
 
 
-def make_handler(database, token):
+def make_handler(database, token, direct_usage_dir=DEFAULT_DIRECT_USAGE_DIR,
+                 ollama_access_logs=DEFAULT_OLLAMA_ACCESS_LOGS):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format_string, *args):
             # Do not print the access key or any rated content in server logs.
@@ -656,7 +664,7 @@ def make_handler(database, token):
         def do_GET(self):
             parsed = urlparse(self.path)
             query = parse_qs(parsed.query)
-            supplied = ((query.get("key") or [""])[0] if parsed.path in ("/", "/usage")
+            supplied = ((query.get("key") or [""])[0] if parsed.path in ("/", "/usage", "/direct-usage")
                         else self.headers.get("X-Local-Token", ""))
             if not secrets.compare_digest(supplied, token):
                 self.json_reply(403, {"error": "Access key required."})
@@ -666,6 +674,8 @@ def make_handler(database, token):
                     self.reply(200, HTML, "text/html; charset=utf-8")
                 elif parsed.path == "/usage":
                     self.reply(200, USAGE_HTML, "text/html; charset=utf-8")
+                elif parsed.path == "/direct-usage":
+                    self.reply(200, DIRECT_USAGE_HTML, "text/html; charset=utf-8")
                 elif parsed.path == "/api/feedback":
                     self.json_reply(200, read_feedback(database))
                 elif parsed.path == "/api/usage":
@@ -674,6 +684,15 @@ def make_handler(database, token):
                     amount = int(amount_text) if view in ("hours", "minutes") else None
                     self.json_reply(200, read_usage(database, view, amount,
                                                     (query.get("date") or [None])[0]))
+                elif parsed.path == "/api/direct-usage":
+                    view = (query.get("view") or ["hours"])[0]
+                    amount_text = (query.get("amount") or ["2"])[0]
+                    amount = int(amount_text) if view in ("hours", "minutes") else None
+                    start, end, oldest, today = usage_window(
+                        view, amount, (query.get("date") or [None])[0])
+                    self.json_reply(200, read_direct_usage(
+                        direct_usage_dir, start, end, view, amount, oldest, today,
+                        ollama_access_logs))
                 elif parsed.path == "/api/detail":
                     feedback_id = (query.get("id") or [""])[0]
                     if not feedback_id or len(feedback_id) > 256:
@@ -696,6 +715,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, default=DEFAULT_DATABASE,
                         help="Open WebUI SQLite database path")
+    parser.add_argument("--direct-usage-dir", type=Path,
+                        default=DEFAULT_DIRECT_USAGE_DIR,
+                        help="Directory containing metadata-only direct Ollama JSONL files")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
@@ -707,7 +729,8 @@ def main():
     read_feedback(args.db)
     key = secrets.token_urlsafe(32)
     try:
-        server = ThreadingHTTPServer((HOST, args.port), make_handler(args.db, key))
+        server = ThreadingHTTPServer((HOST, args.port),
+                                     make_handler(args.db, key, args.direct_usage_dir))
     except OSError as error:
         parser.error(f"Could not start the dashboard: {error}")
     server.daemon_threads = True

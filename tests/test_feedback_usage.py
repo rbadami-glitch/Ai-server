@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import sqlite3
+import sys
 import tempfile
 import threading
 import unittest
@@ -15,6 +16,7 @@ from urllib.request import Request, urlopen
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "OpenWebUi Monitor" / "OpenWebUI-Feedback-Dashboard.py"
+sys.path.insert(0, str(SCRIPT.parent))
 SPEC = importlib.util.spec_from_file_location("feedback_dashboard", SCRIPT)
 dashboard = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(dashboard)

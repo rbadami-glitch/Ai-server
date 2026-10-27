@@ -38,4 +38,4 @@ After reviewing and pulling a code-only update, reload only this dashboard with 
 & 'E:\AI\ollama\OpenWebUI-Monitoring\github\OpenWebUi Monitor\Manage-CW-Feedback-Dashboard.ps1' -Mode Restart
 ```
 
-The restart preserves the private link. Git pull alone does not reload the running Python process. If the task reports an error, inspect `Get-ScheduledTaskInfo -TaskName 'CWAI-Feedback-Dashboard'` and confirm the task account can read the Open WebUI database. Keep the token file, database, and runtime data outside Git. The optional Ollama request page remains a local prototype until an actual recorder supplies data.
+The restart preserves the private link. Git pull alone does not reload the running Python process. If the task reports an error, inspect `Get-ScheduledTaskInfo -TaskName 'CWAI-Feedback-Dashboard'` and confirm the task account can read the Open WebUI database. Keep the token file, database, and runtime data outside Git. The Ollama request page can read existing general-service access logs without an Ollama restart; model and token fields, and private-service requests, still require a separate recorder.
