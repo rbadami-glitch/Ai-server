@@ -70,6 +70,8 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(sum(item["responses"] for item in data["user_model_periods"]), 2)
         self.assertEqual(sum(item["prompts"] for item in data["buckets"]), 1)
         self.assertEqual(sum(item["tokens"] for item in data["buckets"]), 20)
+        self.assertEqual(len(data["recent"]), 2)
+        self.assertTrue(all(item["role"] == "assistant" for item in data["recent"]))
         self.assertIsNone(data["recent"][0]["tokens"])
         self.assertNotIn("content", json.dumps(data))
 

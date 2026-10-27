@@ -476,7 +476,7 @@ def read_usage(path, view="hours", amount=2, selected_day=None, now=None):
                     for group in groups:
                         group["total_token_responses"] += 1
                     bucket["tokens"] += token_data["total"]
-        if len(recent) < 100:
+        if role == "assistant" and len(recent) < 100:
             recent.append({"at": at, "role": role,
                            "user": names.get(event["user_id"], event["user_id"] or "Unknown"),
                            "model": models.get(event["model_id"], event["model_id"] or "—"),
@@ -535,7 +535,7 @@ input[type=number]{width:95px}button{cursor:pointer}a:focus-visible,button:focus
 <div class="grid"><section class="panel"><h2>Token detail</h2><div class="cards" style="grid-template-columns:repeat(2,1fr)"><div><div class="label">Prompt tokens</div><div class="value" id="prompt-tokens">—</div></div><div><div class="label">Completion tokens</div><div class="value" id="completion-tokens">—</div></div></div><p class="muted" id="token-note"></p></section><section class="panel"><h2>Responses by model</h2><div class="table-wrap"><table><thead><tr><th>Model</th><th>Responses</th><th>With tokens</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody id="models"></tbody></table></div></section></div>
 <section class="panel"><h2>Responses by user</h2><p class="muted">The caller is the message owner recorded by Open WebUI, with the chat owner used when the message user ID is empty.</p><div class="table-wrap"><table><thead><tr><th>User</th><th>Responses</th><th>With tokens</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody id="users"></tbody></table></div></section>
 <section class="panel"><h2 id="period-title">Usage by time, user and model</h2><p class="muted">Each row combines saved assistant responses for one time period, caller and model. Token columns include recorded values only.</p><div class="controls"><input id="breakdown-search" type="search" placeholder="Filter by user or model" aria-label="Filter usage breakdown"><span class="muted" id="breakdown-count"></span></div><div class="table-wrap"><table><thead><tr><th>Period</th><th>User</th><th>Model</th><th>Responses</th><th>With tokens</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody id="breakdown"></tbody></table></div></section>
-<section class="panel"><h2>Recent saved chat activity</h2><p class="muted">Newest 100 messages in the selected period. No prompt or answer text is loaded.</p><div class="table-wrap"><table><thead><tr><th>Time</th><th>Type</th><th>User</th><th>Model</th><th>Recorded total tokens</th></tr></thead><tbody id="recent"></tbody></table></div></section>
+<section class="panel"><h2>Recent saved responses</h2><p class="muted">Newest 100 assistant responses in the selected period. No prompt or answer text is loaded.</p><div class="table-wrap"><table><thead><tr><th>Time</th><th>User</th><th>Model</th><th>Recorded total tokens</th></tr></thead><tbody id="recent"></tbody></table></div></section>
 </main><script>
 const key=new URLSearchParams(location.search).get('key')||'';
 const $=id=>document.getElementById(id),fmt=n=>Number(n).toLocaleString(),stamp=n=>new Date(n*1000).toLocaleString();
@@ -577,7 +577,7 @@ async function load(){
     rows('users',data.users,[x=>x.user,...totalColumns]);
     $('period-title').textContent='Usage by '+data.period_unit+', user and model';
     renderBreakdown();
-    rows('recent',data.recent,[x=>stamp(x.at),x=>x.role==='user'?'Prompt':'Response',x=>x.user,x=>x.model,x=>x.tokens===null?'Not recorded':fmt(x.tokens)]);
+    rows('recent',data.recent,[x=>stamp(x.at),x=>x.user,x=>x.model,x=>x.tokens===null?'Not recorded':fmt(x.tokens)]);
     $('updated').textContent='Updated '+new Date().toLocaleTimeString();
   }catch(error){$('updated').textContent='Could not load: '+error.message}finally{busy=false}
 }
