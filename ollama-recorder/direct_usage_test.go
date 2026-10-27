@@ -11,6 +11,14 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+// Gin's streaming writer requires CloseNotifier, which ResponseRecorder lacks.
+type closeNotifyingRecorder struct {
+	*httptest.ResponseRecorder
+	closed chan bool
+}
+
+func (r *closeNotifyingRecorder) CloseNotify() <-chan bool { return r.closed }
+
 func TestDirectUsageRecordsFinalStreamOnly(t *testing.T) {
 	previous := activeDirectUsageRecorder
 	recorder := &directUsageRecorder{queue: make(chan directUsageEvent, 2)}
@@ -33,7 +41,7 @@ func TestDirectUsageRecordsFinalStreamOnly(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodPost, "/api/chat", nil)
 	request.RemoteAddr = "10.0.0.8:4321"
-	response := httptest.NewRecorder()
+	response := &closeNotifyingRecorder{ResponseRecorder: httptest.NewRecorder(), closed: make(chan bool)}
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d", response.Code)
