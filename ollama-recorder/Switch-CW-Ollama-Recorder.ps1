@@ -94,6 +94,22 @@ function Restore-Settings($key, $backup) {
     }
 }
 
+function Add-RecorderEntry([string[]]$existing, [string]$entry) {
+    # Preserve every old REG_MULTI_SZ element. An empty element can terminate
+    # NSSM's native iteration, so insert the new entry before the first one.
+    $result = [System.Collections.Generic.List[string]]::new()
+    $inserted = $false
+    foreach ($item in $existing) {
+        if (-not $inserted -and [string]::IsNullOrEmpty($item)) {
+            $result.Add($entry)
+            $inserted = $true
+        }
+        $result.Add($item)
+    }
+    if (-not $inserted) { $result.Add($entry) }
+    return $result.ToArray()
+}
+
 if ((hostname) -ine $expectedHost) { throw "Run this only on $expectedHost." }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
@@ -143,7 +159,9 @@ try {
             Port = $port
             CurrentExecutable = $app
             ExpectedOriginal = ($app -ieq $originalExe)
-            ExtraVariableNames = ((@($extra) | ForEach-Object { ($_ -split '=', 2)[0] }) -join ', ')
+            ExtraVariableNames = ((@($extra) | ForEach-Object {
+                if ([string]::IsNullOrEmpty($_)) { '(empty slot)' } else { ($_ -split '=', 2)[0] }
+            }) -join ', ')
             CandidateHashVerified = $true
             RuntimeHashVerified = $true
             RecorderFolder = $usageDir
@@ -193,7 +211,8 @@ try {
         $stopped = $true
         $changed = $true
         $key.SetValue('Application', $candidateExe, $appKind)
-        $key.SetValue('AppEnvironmentExtra', [string[]]@($extra + "OLLAMA_DIRECT_USAGE_DIR=$usageDir"),
+        $updatedExtra = Add-RecorderEntry $extra "OLLAMA_DIRECT_USAGE_DIR=$usageDir"
+        $key.SetValue('AppEnvironmentExtra', [string[]]$updatedExtra,
             [Microsoft.Win32.RegistryValueKind]::MultiString)
         Start-Service -Name $ServiceName -ErrorAction Stop
         Assert-Healthy $ServiceName $port $url
