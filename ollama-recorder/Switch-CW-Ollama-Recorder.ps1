@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('Plan', 'Apply', 'Rollback')]
+    [ValidateSet('Plan', 'Verify', 'Apply', 'Rollback')]
     [string]$Mode = 'Plan',
     [ValidateSet('CWAI-Gemma4-Ollama', 'CWAI-Ollama')]
     [string]$ServiceName = 'CWAI-Gemma4-Ollama',
@@ -35,24 +35,26 @@ function Wait-ServiceState([string]$name, [System.ServiceProcess.ServiceControll
     $controller.WaitForStatus($state, [timespan]::FromSeconds(45))
 }
 
-function Assert-Healthy([string]$name, [int]$listenerPort, [string]$baseUrl) {
+function Assert-Healthy([string]$name, [int]$listenerPort, [string]$baseUrl,
+    [string]$expectedExecutable) {
     for ($attempt = 0; $attempt -lt 30; $attempt++) {
         try {
             $service = Get-CimInstance Win32_Service -Filter "Name='$name'"
-            $listener = Get-NetTCPConnection -LocalPort $listenerPort -State Listen -ErrorAction Stop |
-                Where-Object { $_.LocalAddress -eq '127.0.0.1' -or $_.LocalAddress -eq '0.0.0.0' } |
-                Select-Object -First 1
-            if ($service.State -eq 'Running' -and $listener) {
-                $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)"
-                $version = (Invoke-RestMethod -Uri "$baseUrl/api/version" -TimeoutSec 3).version
-                if ($process.ParentProcessId -eq $service.ProcessId -and $version -eq '0.30.6') {
-                    return
+            if ($service.State -eq 'Running') {
+                $listeners = @(Get-NetTCPConnection -LocalPort $listenerPort -State Listen -ErrorAction Stop)
+                foreach ($listener in $listeners) {
+                    $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)"
+                    if ($process.ParentProcessId -eq $service.ProcessId -and
+                        $process.ExecutablePath -ieq $expectedExecutable) {
+                        $version = (Invoke-RestMethod -Uri "$baseUrl/api/version" -TimeoutSec 3).version
+                        if ($version -eq '0.30.6') { return }
+                    }
                 }
             }
         } catch { }
         Start-Sleep -Seconds 2
     }
-    throw "$name did not own port $listenerPort and answer Ollama 0.30.6 within 60 seconds."
+    throw "$name did not own port $listenerPort as $expectedExecutable and answer Ollama 0.30.6 within 60 seconds."
 }
 
 function Assert-RecorderEvent([int]$listenerPort, [string]$baseUrl, [string]$directory) {
@@ -113,7 +115,8 @@ function Add-RecorderEntry([string[]]$existing, [string]$entry) {
 if ((hostname) -ine $expectedHost) { throw "Run this only on $expectedHost." }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
-if ($Mode -ne 'Plan' -and -not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+if ($Mode -in @('Apply', 'Rollback') -and
+    -not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Apply and Rollback require Administrator PowerShell.'
 }
 
@@ -121,7 +124,7 @@ $service = Get-CimInstance Win32_Service -Filter "Name='$ServiceName'"
 if (-not $service -or $service.StartName -ne 'LocalSystem' -or $service.PathName -notmatch 'nssm\.exe') {
     throw 'Unexpected service account or wrapper; no change made.'
 }
-$key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($subkey, $Mode -ne 'Plan')
+$key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($subkey, $Mode -in @('Apply', 'Rollback'))
 if (-not $key) { throw "Missing registry key: HKLM\$subkey" }
 try {
     $names = @($key.GetValueNames())
@@ -169,6 +172,12 @@ try {
         return
     }
 
+    if ($Mode -eq 'Verify') {
+        Assert-Healthy $ServiceName $port $url $app
+        Write-Output "$ServiceName owns port $port as $app and answers Ollama 0.30.6."
+        return
+    }
+
     if ($Mode -eq 'Rollback') {
         if (-not $BackupFile -or -not (Test-Path -LiteralPath $BackupFile -PathType Leaf)) {
             throw 'Rollback requires an existing -BackupFile.'
@@ -182,7 +191,7 @@ try {
         Wait-ServiceState $ServiceName ([System.ServiceProcess.ServiceControllerStatus]::Stopped)
         Restore-Settings $key $backup
         Start-Service -Name $ServiceName -ErrorAction Stop
-        Assert-Healthy $ServiceName $port $url
+        Assert-Healthy $ServiceName $port $url $originalExe
         Write-Output "$ServiceName restored to the signed executable; version and port verified."
         return
     }
@@ -215,7 +224,7 @@ try {
         $key.SetValue('AppEnvironmentExtra', [string[]]$updatedExtra,
             [Microsoft.Win32.RegistryValueKind]::MultiString)
         Start-Service -Name $ServiceName -ErrorAction Stop
-        Assert-Healthy $ServiceName $port $url
+        Assert-Healthy $ServiceName $port $url $candidateExe
         Assert-RecorderEvent $port $url $usageDir
         Write-Output "$ServiceName now runs the recorder on unchanged port $port."
         Write-Output "Rollback command: & '$PSCommandPath' -Mode Rollback -ServiceName '$ServiceName' -BackupFile '$backupPath'"
@@ -233,7 +242,7 @@ try {
             if ($current.Status -eq 'Stopped') {
                 Start-Service -Name $ServiceName -ErrorAction Stop
             }
-            Assert-Healthy $ServiceName $port $url
+            Assert-Healthy $ServiceName $port $url $originalExe
         } catch {
             $rollbackFailure = $_.Exception.Message
         }
