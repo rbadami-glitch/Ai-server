@@ -535,7 +535,9 @@ input[type=number]{width:95px}button{cursor:pointer}a:focus-visible,button:focus
 <div class="grid"><section class="panel"><h2>Token detail</h2><div class="cards" style="grid-template-columns:repeat(2,1fr)"><div><div class="label">Prompt tokens</div><div class="value" id="prompt-tokens">—</div></div><div><div class="label">Completion tokens</div><div class="value" id="completion-tokens">—</div></div></div><p class="muted" id="token-note"></p></section><section class="panel"><h2>Responses by model</h2><div class="table-wrap"><table><thead><tr><th>Model</th><th>Responses</th><th>With tokens</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody id="models"></tbody></table></div></section></div>
 <section class="panel"><h2>Responses by user</h2><p class="muted">The caller is the message owner recorded by Open WebUI, with the chat owner used when the message user ID is empty.</p><div class="table-wrap"><table><thead><tr><th>User</th><th>Responses</th><th>With tokens</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody id="users"></tbody></table></div></section>
 <section class="panel"><h2 id="period-title">Usage by time, user and model</h2><p class="muted">Each row combines saved assistant responses for one time period, caller and model. Token columns include recorded values only.</p><div class="controls"><input id="breakdown-search" type="search" placeholder="Filter by user or model" aria-label="Filter usage breakdown"><span class="muted" id="breakdown-count"></span></div><div class="table-wrap"><table><thead><tr><th>Period</th><th>User</th><th>Model</th><th>Responses</th><th>With tokens</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody id="breakdown"></tbody></table></div></section>
-<section class="panel"><h2>Recent saved responses</h2><p class="muted">Newest 100 assistant responses in the selected period. No prompt or answer text is loaded.</p><div class="table-wrap"><table><thead><tr><th>Time</th><th>User</th><th>Model</th><th>Recorded total tokens</th></tr></thead><tbody id="recent"></tbody></table></div></section>
+<section class="panel"><h2>Recent saved responses</h2><p class="muted">Filters and sorting apply to the newest 100 assistant responses in the selected period. No prompt or answer text is loaded.</p>
+<div class="controls"><label>Search<input id="recent-search" type="search" placeholder="User or model"></label><label>User<select id="recent-user"><option value="">All users</option></select></label><label>Model<select id="recent-model"><option value="">All models</option></select></label><label>Token count<select id="recent-coverage"><option value="">Any</option><option value="recorded">Recorded</option><option value="missing">Not recorded</option></select></label><label>Minimum tokens<input id="recent-min" type="number" min="0" placeholder="Any"></label><label>Maximum tokens<input id="recent-max" type="number" min="0" placeholder="Any"></label><label>Sort by<select id="recent-sort"><option value="at">Time</option><option value="user">User</option><option value="model">Model</option><option value="tokens">Total tokens</option></select></label><label>Order<select id="recent-order"><option value="desc">Descending</option><option value="asc">Ascending</option></select></label><button id="recent-reset" type="button">Clear filters</button><span id="recent-count" class="muted" aria-live="polite"></span></div>
+<div class="table-wrap"><table><thead><tr><th>Time</th><th>User</th><th>Model</th><th>Recorded total tokens</th></tr></thead><tbody id="recent"></tbody></table></div></section>
 </main><script>
 const key=new URLSearchParams(location.search).get('key')||'';
 const $=id=>document.getElementById(id),fmt=n=>Number(n).toLocaleString(),stamp=n=>new Date(n*1000).toLocaleString();
@@ -543,7 +545,7 @@ const node=(tag,value)=>{const item=document.createElement(tag);item.textContent
 $('feedback-link').href='/?key='+encodeURIComponent(key);$('direct-link').href='/direct-usage?key='+encodeURIComponent(key);
 function controls(){const mode=$('mode').value,range=mode==='range';$('amount-box').hidden=!range;$('unit-box').hidden=!range;$('day-box').hidden=mode!=='day';$('amount').max=$('unit').value==='minutes'?10080:168;if(+$('amount').value>+$('amount').max)$('amount').value=$('amount').max}
 function draw(rootId,points,field,start,end,scaleId,startId,endId){const root=$(rootId);root.replaceChildren();const max=Math.max(0,...points.map(x=>x[field]));for(const item of points){const bar=node('div','');bar.className='bar';bar.style.height=(item[field]===0?0:Math.max(2,item[field]/max*195))+'px';bar.title=stamp(item.at)+' · '+fmt(item[field]);root.append(bar)}$(scaleId).textContent='Peak '+fmt(max)+' / bucket';$(startId).textContent=new Date(start).toLocaleString();$(endId).textContent=new Date(end).toLocaleString()}
-function rows(rootId,items,columns){const root=$(rootId);root.replaceChildren();if(!items.length){const row=node('tr',''),cell=node('td','No saved activity in this period.');cell.colSpan=columns.length;row.append(cell);root.append(row);return}for(const item of items){const row=node('tr','');for(const column of columns)row.append(node('td',column(item)));root.append(row)}}
+function rows(rootId,items,columns,emptyMessage='No saved activity in this period.'){const root=$(rootId);root.replaceChildren();if(!items.length){const row=node('tr',''),cell=node('td',emptyMessage);cell.colSpan=columns.length;row.append(cell);root.append(row);return}for(const item of items){const row=node('tr','');for(const column of columns)row.append(node('td',column(item)));root.append(row)}}
 let busy=false,lastUsage=null;
 const recorded=(value,count)=>count?fmt(value):'Not recorded';
 function renderBreakdown(){
@@ -552,6 +554,23 @@ function renderBreakdown(){
   const matching=lastUsage.user_model_periods.filter(x=>!query||[x.user,x.model,x.period].join(' ').toLowerCase().includes(query));
   rows('breakdown',matching.slice(0,300),[x=>x.period,x=>x.user,x=>x.model,x=>fmt(x.responses),x=>fmt(x.total_token_responses)+' / '+fmt(x.responses),x=>recorded(x.prompt_tokens,x.prompt_token_responses),x=>recorded(x.completion_tokens,x.completion_token_responses),x=>recorded(x.total_tokens,x.total_token_responses)]);
   $('breakdown-count').textContent='Showing '+fmt(Math.min(300,matching.length))+' of '+fmt(matching.length)+' matching groups'+(matching.length>300?' · narrow the filter to see more':'');
+}
+function recentOptions(id,field,label){
+  const select=$(id),current=select.value;
+  select.replaceChildren(new Option('All '+label,''));
+  for(const value of [...new Set(lastUsage.recent.map(x=>x[field]))].sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:'base'})))select.add(new Option(value,value));
+  if(current&&![...select.options].some(option=>option.value===current))select.add(new Option(current,current));
+  select.value=current;
+}
+function renderRecent(){
+  if(!lastUsage)return;
+  const query=$('recent-search').value.trim().toLowerCase(),user=$('recent-user').value,model=$('recent-model').value,coverage=$('recent-coverage').value;
+  const min=$('recent-min').value===''?null:Number($('recent-min').value),max=$('recent-max').value===''?null:Number($('recent-max').value);
+  const field=$('recent-sort').value,direction=$('recent-order').value==='asc'?1:-1;
+  const matching=lastUsage.recent.filter(x=>(!query||[x.user,x.model,stamp(x.at)].join(' ').toLowerCase().includes(query))&&(!user||x.user===user)&&(!model||x.model===model)&&(!coverage||(coverage==='recorded'?x.tokens!==null:x.tokens===null))&&(min===null||x.tokens!==null&&x.tokens>=min)&&(max===null||x.tokens!==null&&x.tokens<=max));
+  matching.sort((a,b)=>{const av=a[field],bv=b[field];if(av===null||bv===null)return av===null&&bv===null?b.at-a.at:av===null?1:-1;const comparison=typeof av==='number'?av-bv:String(av).localeCompare(String(bv),undefined,{numeric:true,sensitivity:'base'});return comparison*direction||b.at-a.at});
+  rows('recent',matching,[x=>stamp(x.at),x=>x.user,x=>x.model,x=>x.tokens===null?'Not recorded':fmt(x.tokens)],'No responses match these filters.');
+  $('recent-count').textContent='Showing '+fmt(matching.length)+' of '+fmt(lastUsage.recent.length)+' recent responses';
 }
 async function load(){
   if(busy)return;busy=true;
@@ -577,12 +596,15 @@ async function load(){
     rows('users',data.users,[x=>x.user,...totalColumns]);
     $('period-title').textContent='Usage by '+data.period_unit+', user and model';
     renderBreakdown();
-    rows('recent',data.recent,[x=>stamp(x.at),x=>x.user,x=>x.model,x=>x.tokens===null?'Not recorded':fmt(x.tokens)]);
+    recentOptions('recent-user','user','users');recentOptions('recent-model','model','models');renderRecent();
     $('updated').textContent='Updated '+new Date().toLocaleTimeString();
   }catch(error){$('updated').textContent='Could not load: '+error.message}finally{busy=false}
 }
 for(const id of ['mode','unit','amount','day'])$(id).addEventListener('change',()=>{controls();if($('mode').value!=='day'||$('day').value)load()});
 $('breakdown-search').addEventListener('input',renderBreakdown);
+for(const id of ['recent-search','recent-min','recent-max'])$(id).addEventListener('input',renderRecent);
+for(const id of ['recent-user','recent-model','recent-coverage','recent-sort','recent-order'])$(id).addEventListener('change',renderRecent);
+$('recent-reset').onclick=()=>{for(const id of ['recent-search','recent-user','recent-model','recent-coverage','recent-min','recent-max'])$(id).value='';$('recent-sort').value='at';$('recent-order').value='desc';renderRecent()};
 $('refresh').onclick=load;controls();load();setInterval(load,15000);
 </script></body></html>'''
 
