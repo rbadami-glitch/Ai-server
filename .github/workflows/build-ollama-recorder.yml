@@ -65,10 +65,15 @@ jobs:
         run: |
           go build -trimpath -ldflags '-s -w -X=github.com/ollama/ollama/version.Version=0.30.6 -X=github.com/ollama/ollama/server.mode=release' -o "$env:RUNNER_TEMP\ollama-direct-usage.exe" .
           if ($LASTEXITCODE -ne 0) { throw 'Ollama build failed.' }
-          $winpthread = (& gcc -print-file-name=libwinpthread-1.dll).Trim()
-          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $winpthread -PathType Leaf)) {
-            throw "Could not locate the MinGW runtime DLL: $winpthread"
-          }
+          # GCC's -print-file-name searches its library directory, not necessarily the
+          # bin directory from which Windows loaded this DLL during the first build.
+          $gccDir = Split-Path -Parent (Get-Command gcc -ErrorAction Stop).Source
+          $searchDirs = @($gccDir) + @($env:PATH -split ';' | Where-Object { $_ } | ForEach-Object { $_.Trim('"') })
+          $winpthread = $searchDirs |
+            ForEach-Object { Join-Path $_ 'libwinpthread-1.dll' } |
+            Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+            Select-Object -First 1
+          if (-not $winpthread) { throw 'Could not locate libwinpthread-1.dll beside gcc or on PATH.' }
           Copy-Item -LiteralPath $winpthread -Destination "$env:RUNNER_TEMP\libwinpthread-1.dll"
           $savedPath = $env:PATH
           try {
