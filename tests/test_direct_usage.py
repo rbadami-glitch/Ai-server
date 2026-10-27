@@ -88,6 +88,19 @@ class DirectUsageTests(unittest.TestCase):
         self.assertFalse(data["complete"])
         self.assertEqual(data["totals"]["requests"], 2)
 
+    def test_cutover_probes_do_not_inflate_requests_or_failures(self):
+        for path, listener in ((self.general, "11434"), (self.private, "11435")):
+            with path.open("a", encoding="utf-8") as out:
+                out.write(json.dumps({"schema": 1, "at": self.recent + 20,
+                                      "listener": listener, "route": "/api/generate",
+                                      "model": "cw-recorder-probe-20261027075602",
+                                      "source_ip": "127.0.0.1", "status": 404}) + "\n")
+        data = self._read()
+        self.assertEqual((data["totals"]["requests"], data["totals"]["failures"]), (2, 1))
+        self.assertEqual(data["error_count"], 0)
+        self.assertFalse(any(row["model"].startswith("cw-recorder-probe-")
+                             for row in data["models"]))
+
     def test_real_access_log_fallback_and_recorder_priority(self):
         log = self.directory / "ollama-service.log"
         log_time = datetime.fromtimestamp(self.recent).strftime("%Y/%m/%d - %H:%M:%S")

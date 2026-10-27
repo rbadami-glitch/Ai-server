@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 
 PORTS = ("11434", "11435")
+PROBE_MODEL_PREFIX = "cw-recorder-probe-"
 MAX_LINE_BYTES = 8192
 MAX_FILE_BYTES = 256 * 1024 * 1024
 MAX_ACCESS_LOG_BYTES = 8 * 1024 * 1024
@@ -146,6 +147,11 @@ def read_direct_usage(directory, start, end, view, amount, oldest, today,
                     event = _event(raw)
                     if event is None:
                         errors.append(f"Invalid record in {path.name}:{line_number}.")
+                    elif (event["model"].startswith(PROBE_MODEL_PREFIX)
+                          and event["route"] == "/api/generate"
+                          and event["status"] == 404):
+                        # Cutover probes remain on disk but are not user traffic.
+                        continue
                     elif start_epoch <= event["at"] < end_epoch:
                         events.append(event)
         except OSError:
