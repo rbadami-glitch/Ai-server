@@ -18,6 +18,10 @@ The proposed recorder file names are `ollama-11434-YYYY-MM-DD.jsonl` and `ollama
 
 The signed original `ollama.exe` remains beside the instrumented executable for rollback. The recorder files and service backups stay outside Git. The dashboard task must be restarted after pulling dashboard source changes; a Git pull alone does not reload its Python process.
 
+## Planned Gemma routing rule
+
+The next instrumented Ollama build can force chat and text-generation requests to `gemma4:31b` on either listener when that service starts with `OLLAMA_FORCE_CHAT_MODEL=gemma4:31b`. It rewrites the incoming JSON model field before native or OpenAI-compatible routing selects a model. This covers `/api/chat`, `/api/generate`, `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, and `/v1/messages`. Embedding, image, audio, model-list, and management endpoints are unchanged. Malformed JSON keeps its normal error response. The setting is opt-in and **is not active on the AI server merely because the source is pulled**. Both Ollama services need a reviewed candidate build and individual cutover to enforce it. The dashboard then records the model actually used, `gemma4:31b`; it does not identify the original human requester.
+
 The manually triggered Windows candidate build and the production review steps are in [`ollama-recorder/BUILD_AND_CUTOVER.md`](ollama-recorder/BUILD_AND_CUTOVER.md). Building an artifact alone does not deploy it or restart a service.
 
 ## Open WebUI feedback and chat usage
