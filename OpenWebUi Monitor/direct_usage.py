@@ -39,6 +39,18 @@ def _count(value):
     return value if type(value) is int and value >= 0 else None
 
 
+def _duration_stats(values):
+    if not values:
+        return {"duration_coverage": 0, "avg_ms": None,
+                "p50_ms": None, "p95_ms": None, "max_ms": None}
+    ordered = sorted(values)
+    return {"duration_coverage": len(ordered),
+            "avg_ms": round(sum(ordered) / len(ordered), 1),
+            "p50_ms": ordered[(len(ordered) - 1) // 2],
+            "p95_ms": ordered[(95 * len(ordered) + 99) // 100 - 1],
+            "max_ms": ordered[-1]}
+
+
 def _caller_label(event):
     """Label only the observed listener, peer IP, and route combinations."""
     return CALLER_LABELS.get(
@@ -65,12 +77,13 @@ def _event(raw):
     prompt = _count(raw.get("prompt_tokens"))
     completion = _count(raw.get("completion_tokens"))
     total = _count(raw.get("total_tokens"))
+    duration_ms = _count(raw.get("duration_ms"))
     if total is None and prompt is not None and completion is not None:
         total = prompt + completion
     return {"at": at, "listener": listener, "model": model or "Unknown model",
             "source_ip": source_ip or "Unknown IP", "route": route,
             "status": status, "prompt": prompt, "completion": completion,
-            "total": total}
+            "total": total, "duration_ms": duration_ms}
 
 
 def _files(directory, start, end):
@@ -110,7 +123,8 @@ def _access_events(path, start_epoch, end_epoch):
                 events.append({"at": at, "listener": "11434", "route": route,
                                "model": "Not recorded", "source_ip": address.strip(),
                                "status": int(status), "prompt": None,
-                               "completion": None, "total": None})
+                               "completion": None, "total": None,
+                               "duration_ms": None})
     return events, offset > 0
 
 
@@ -192,6 +206,12 @@ def read_direct_usage(directory, start, end, view, amount, oldest, today,
               "token_requests": 0, "prompt_tokens": 0, "completion_tokens": 0,
               "total_tokens": 0, "prompt_coverage": 0,
               "completion_coverage": 0, "total_coverage": 0}
+    duration_values = []
+    matrix = defaultdict(lambda: {"requests": 0, "http_4xx": 0,
+                                  "http_5xx": 0, "duration_values": [],
+                                  "prompt_tokens": 0, "completion_tokens": 0,
+                                  "prompt_coverage": 0,
+                                  "completion_coverage": 0})
 
     def empty_group():
         return {"requests": 0, "token_requests": 0,
@@ -212,6 +232,20 @@ def read_direct_usage(directory, start, end, view, amount, oldest, today,
         event["caller_name"] = _caller_label(event)
         totals["requests"] += 1
         totals["successes" if event["status"] < 400 else "failures"] += 1
+        metric = matrix[(event["listener"], event["model"],
+                         event["caller_name"], event["route"])]
+        metric["requests"] += 1
+        if 400 <= event["status"] < 500:
+            metric["http_4xx"] += 1
+        elif event["status"] >= 500:
+            metric["http_5xx"] += 1
+        if event["duration_ms"] is not None:
+            duration_values.append(event["duration_ms"])
+            metric["duration_values"].append(event["duration_ms"])
+        for token_key in ("prompt", "completion"):
+            if event[token_key] is not None:
+                metric[f"{token_key}_tokens"] += event[token_key]
+                metric[f"{token_key}_coverage"] += 1
         local_at = datetime.fromtimestamp(event["at"], start.tzinfo)
         period = (local_at.strftime("%Y-%m-%d") if period_unit == "day"
                   else local_at.strftime("%Y-%m-%d %H:00") if period_unit == "hour"
@@ -250,10 +284,23 @@ def read_direct_usage(directory, start, end, view, amount, oldest, today,
     model_rows.sort(key=lambda row: (-row["requests"], row["model"]))
     caller_rows.sort(key=lambda row: (-row["requests"], row["caller"]))
     detail_rows.sort(key=lambda row: (row["period"], row["caller"], row["model"]), reverse=True)
+    matrix_rows = []
+    for (listener, model, caller_name, route), values in matrix.items():
+        durations = values.pop("duration_values")
+        matrix_rows.append({"listener": listener, "model": model,
+                            "caller_name": caller_name, "route": route,
+                            **values, **_duration_stats(durations)})
+    matrix_rows.sort(key=lambda row: (-row["requests"], row["listener"],
+                                      row["model"], row["caller_name"], row["route"]))
+    metrics = {**_duration_stats(duration_values),
+               "requests_per_minute": round(totals["requests"] / max(duration / 60, 1 / 60), 2),
+               "http_4xx": sum(row["http_4xx"] for row in matrix_rows),
+               "http_5xx": sum(row["http_5xx"] for row in matrix_rows)}
     return {"view": view, "start": start.isoformat(), "end": end.isoformat(),
             "oldest_day": oldest.isoformat(), "today": today.isoformat(),
             "totals": totals, "buckets": sorted(buckets.values(), key=lambda item: item["at"]),
             "models": model_rows, "callers": caller_rows, "periods": detail_rows,
+            "metrics": metrics, "matrix": matrix_rows,
             "source_ip_count": len({event["source_ip"] for event in events}),
             "period_unit": period_unit, "recent": events[:100],
             "available_files": available_files + access_log_files,
@@ -289,13 +336,21 @@ input[type=number]{width:95px}button{cursor:pointer}a:focus-visible,button:focus
 <div class="notice" id="notice">Access logs provide time, route, status and source IP, but not model or tokens. Only the last 8 MiB of each access log is read. No prompts or answers are shown.</div>
 <div class="controls"><label>Range<select id="mode"><option value="range">Last N minutes or hours</option><option value="day">Selected day</option><option value="week">Last 7 days</option></select></label><label id="amount-box">Amount<input id="amount" type="number" min="1" max="168" value="2"></label><label id="unit-box">Unit<select id="unit"><option value="hours">Hours</option><option value="minutes">Minutes</option></select></label><label id="day-box" hidden>Day<input id="day" type="date"></label><button id="refresh">Refresh</button><span id="updated" class="muted">Loading…</span></div>
 <div class="cards"><div class="card"><div class="label">Observed requests</div><div class="value" id="requests">—</div><div class="hint">Completed records only</div></div><div class="card"><div class="label">HTTP failures</div><div class="value" id="failures">—</div><div class="hint">Status 400 or higher</div></div><div class="card"><div class="label">Recorded total tokens</div><div class="value" id="tokens">—</div><div class="hint" id="coverage">Only requests with counts</div></div><div class="card"><div class="label">Source IPs</div><div class="value" id="callers">—</div><div class="hint">A proxy may appear as localhost</div></div></div>
+<section class="panel"><h2>Request performance</h2>
+<p class="muted">Completed Ollama inference requests in the selected period. Latency measures request start through handler completion, including streaming responses. Older recorder rows have no latency reading.</p>
+<div class="cards"><div><div class="label">Average latency</div><div class="value" id="latency-avg">--</div></div><div><div class="label">Median latency (p50)</div><div class="value" id="latency-p50">--</div></div><div><div class="label">95th percentile (p95)</div><div class="value" id="latency-p95">--</div></div><div><div class="label">Slowest request</div><div class="value" id="latency-max">--</div></div></div>
+<p class="muted" id="latency-coverage"></p>
+<div class="cards"><div><div class="label">Requests per minute</div><div class="value" id="request-rate">--</div></div><div><div class="label">HTTP 4xx</div><div class="value" id="http-4xx">--</div></div><div><div class="label">HTTP 5xx</div><div class="value" id="http-5xx">--</div></div><div><div class="label">Failure rate</div><div class="value" id="failure-rate">--</div></div></div></section>
 <div class="grid"><section class="panel"><h2>Requests over time</h2><div class="chart" id="request-chart" role="img" aria-label="Direct requests over time"></div><div class="axis"><span id="request-start">—</span><span id="request-scale">—</span><span id="request-end">—</span></div></section><section class="panel tokens"><h2>Recorded tokens over time</h2><div class="chart" id="token-chart" role="img" aria-label="Recorded tokens over time"></div><div class="axis"><span id="token-start">—</span><span id="token-scale">—</span><span id="token-end">—</span></div></section></div>
 <div class="grid"><section class="panel"><h2>Token detail</h2><div class="cards" style="grid-template-columns:repeat(2,1fr)"><div><div class="label">Prompt tokens</div><div class="value" id="prompt-tokens">—</div></div><div><div class="label">Completion tokens</div><div class="value" id="completion-tokens">—</div></div></div><p class="muted" id="token-note"></p></section><section class="panel"><h2>Requests by model</h2><div class="table-wrap"><table><thead><tr><th>Model</th><th>Requests</th><th>With totals</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody id="models"></tbody></table></div></section></div>
 <section class="panel"><h2>Requests by caller and source IP</h2><p class="muted">Caller names are based on the current listener, source IP and route. Forwarded requests may show the local proxy address; unmatched traffic is Unidentified.</p><div class="table-wrap"><table><thead><tr><th>Caller</th><th>Source IP</th><th>Requests</th><th>With totals</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody id="sources"></tbody></table></div></section>
 <section class="panel"><h2 id="period-title">Usage by time, caller, source IP and model</h2><div class="controls"><input id="search" type="search" placeholder="Filter by caller, IP or model" aria-label="Filter breakdown"><span class="muted" id="shown"></span></div><div class="table-wrap"><table><thead><tr><th>Period</th><th>Caller</th><th>Source IP</th><th>Model</th><th>Requests</th><th>With totals</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody id="breakdown"></tbody></table></div></section>
+<section class="panel"><h2>Performance matrix</h2><p class="muted">All observed requests in the selected period, grouped by listener, model, caller and route. Percentiles use only recorded durations; token totals use only recorded counts.</p>
+<div class="controls"><label>Search<input id="matrix-search" type="search" placeholder="Listener, model, caller or route"></label><label>Sort by<select id="matrix-sort"><option value="requests">Requests</option><option value="p95_ms">p95 latency</option><option value="p50_ms">p50 latency</option><option value="http_5xx">HTTP 5xx</option><option value="http_4xx">HTTP 4xx</option></select></label><label>Order<select id="matrix-order"><option value="desc">Descending</option><option value="asc">Ascending</option></select></label><span id="matrix-count" class="muted"></span></div>
+<div class="table-wrap"><table><thead><tr><th>Listener</th><th>Model</th><th>Caller</th><th>Route</th><th>Requests</th><th>4xx</th><th>5xx</th><th>Failure rate</th><th>p50</th><th>p95</th><th>Latency coverage</th><th>Input tokens</th><th>Output tokens</th></tr></thead><tbody id="matrix"></tbody></table></div></section>
 <section class="panel"><h2>Recent observed requests</h2><p class="muted">Filters and sorting apply to the newest 100 observed requests in the selected period. Metadata only; no prompts, answers or credentials.</p>
-<div class="controls"><label>Search<input id="recent-search" type="search" placeholder="Search request metadata"></label><label>Listener<select id="recent-listener"><option value="">All listeners</option></select></label><label>Route<select id="recent-route"><option value="">All routes</option></select></label><label>Model<select id="recent-model"><option value="">All models</option></select></label><label>Caller<select id="recent-caller"><option value="">All callers</option></select></label><label>Source IP<select id="recent-ip"><option value="">All IPs</option></select></label><label>Status<select id="recent-status"><option value="">All statuses</option></select></label><label>Token count<select id="recent-coverage"><option value="">Any</option><option value="recorded">Recorded</option><option value="missing">Not recorded</option></select></label><label>Minimum tokens<input id="recent-min" type="number" min="0" placeholder="Any"></label><label>Maximum tokens<input id="recent-max" type="number" min="0" placeholder="Any"></label><label>Sort by<select id="recent-sort"><option value="at">Time</option><option value="listener">Listener</option><option value="route">Route</option><option value="model">Model</option><option value="caller_name">Caller</option><option value="source_ip">Source IP</option><option value="status">Status</option><option value="total">Total tokens</option></select></label><label>Order<select id="recent-order"><option value="desc">Descending</option><option value="asc">Ascending</option></select></label><button id="recent-reset" type="button">Clear filters</button><span id="recent-count" class="muted" aria-live="polite"></span></div>
-<div class="table-wrap"><table><thead><tr><th>Time</th><th>Listener</th><th>Route</th><th>Model</th><th>Caller</th><th>Source IP</th><th>Status</th><th>Total tokens</th></tr></thead><tbody id="recent"></tbody></table></div></section>
+<div class="controls"><label>Search<input id="recent-search" type="search" placeholder="Search request metadata"></label><label>Listener<select id="recent-listener"><option value="">All listeners</option></select></label><label>Route<select id="recent-route"><option value="">All routes</option></select></label><label>Model<select id="recent-model"><option value="">All models</option></select></label><label>Caller<select id="recent-caller"><option value="">All callers</option></select></label><label>Source IP<select id="recent-ip"><option value="">All IPs</option></select></label><label>Status<select id="recent-status"><option value="">All statuses</option></select></label><label>Token count<select id="recent-coverage"><option value="">Any</option><option value="recorded">Recorded</option><option value="missing">Not recorded</option></select></label><label>Latency<select id="recent-latency-coverage"><option value="">Any</option><option value="recorded">Recorded</option><option value="missing">Not recorded</option></select></label><label>Minimum tokens<input id="recent-min" type="number" min="0" placeholder="Any"></label><label>Maximum tokens<input id="recent-max" type="number" min="0" placeholder="Any"></label><label>Minimum latency (ms)<input id="recent-latency-min" type="number" min="0" placeholder="Any"></label><label>Maximum latency (ms)<input id="recent-latency-max" type="number" min="0" placeholder="Any"></label><label>Sort by<select id="recent-sort"><option value="at">Time</option><option value="listener">Listener</option><option value="route">Route</option><option value="model">Model</option><option value="caller_name">Caller</option><option value="source_ip">Source IP</option><option value="status">Status</option><option value="total">Total tokens</option><option value="duration_ms">Latency</option></select></label><label>Order<select id="recent-order"><option value="desc">Descending</option><option value="asc">Ascending</option></select></label><button id="recent-reset" type="button">Clear filters</button><span id="recent-count" class="muted" aria-live="polite"></span></div>
+<div class="table-wrap"><table><thead><tr><th>Time</th><th>Listener</th><th>Route</th><th>Model</th><th>Caller</th><th>Source IP</th><th>Status</th><th>Total tokens</th><th>Latency</th></tr></thead><tbody id="recent"></tbody></table></div></section>
 </main><script>
 const key=new URLSearchParams(location.search).get('key')||'';
 const $=id=>document.getElementById(id),fmt=n=>Number(n).toLocaleString(),stamp=n=>new Date(n*1000).toLocaleString();
@@ -305,24 +360,44 @@ function controls(){const mode=$('mode').value,range=mode==='range';$('amount-bo
 function draw(rootId,points,field,start,end,scaleId,startId,endId){const root=$(rootId);root.replaceChildren();const max=Math.max(0,...points.map(x=>x[field]));for(const item of points){const bar=node('div','');bar.className='bar';bar.style.height=(item[field]===0?0:Math.max(2,item[field]/max*195))+'px';bar.title=stamp(item.at)+' · '+fmt(item[field]);root.append(bar)}$(scaleId).textContent='Peak '+fmt(max)+' / bucket';$(startId).textContent=new Date(start).toLocaleString();$(endId).textContent=new Date(end).toLocaleString()}
 function rows(rootId,items,columns,emptyMessage='No observed records in this period.'){const root=$(rootId);root.replaceChildren();if(!items.length){const row=node('tr',''),cell=node('td',emptyMessage);cell.colSpan=columns.length;row.append(cell);root.append(row);return}for(const item of items){const row=node('tr','');for(const column of columns)row.append(node('td',column(item)));root.append(row)}}
 const recorded=(value,count)=>count?fmt(value):'Not recorded';let busy=false,lastData=null;
+const ms=value=>value===null?'Not recorded':fmt(value)+' ms';
+const pct=(part,total)=>total?(100*part/total).toFixed(1)+'%':'0.0%';
 function breakdown(){if(!lastData)return;const query=$('search').value.trim().toLowerCase();const matching=lastData.periods.filter(x=>!query||[x.caller_name,x.caller,x.model,x.period].join(' ').toLowerCase().includes(query));rows('breakdown',matching.slice(0,300),[x=>x.period,x=>x.caller_name,x=>x.caller,x=>x.model,x=>fmt(x.requests),x=>fmt(x.total_coverage)+' / '+fmt(x.requests),x=>recorded(x.prompt_tokens,x.prompt_coverage),x=>recorded(x.completion_tokens,x.completion_coverage),x=>recorded(x.total_tokens,x.total_coverage)]);$('shown').textContent='Showing '+fmt(Math.min(300,matching.length))+' of '+fmt(matching.length)+' matching groups'}
+function renderMatrix(){
+  if(!lastData)return;
+  const query=$('matrix-search').value.trim().toLowerCase(),field=$('matrix-sort').value,direction=$('matrix-order').value==='asc'?1:-1;
+  const matching=lastData.matrix.filter(x=>!query||[x.listener,x.model,x.caller_name,x.route].join(' ').toLowerCase().includes(query));
+  matching.sort((a,b)=>{const av=a[field],bv=b[field];if(av===null||bv===null)return av===null&&bv===null?b.requests-a.requests:av===null?1:-1;return (av-bv)*direction||b.requests-a.requests});
+  rows('matrix',matching.slice(0,300),[x=>x.listener,x=>x.model,x=>x.caller_name,x=>x.route,x=>fmt(x.requests),x=>fmt(x.http_4xx),x=>fmt(x.http_5xx),x=>pct(x.http_4xx+x.http_5xx,x.requests),x=>ms(x.p50_ms),x=>ms(x.p95_ms),x=>fmt(x.duration_coverage)+' / '+fmt(x.requests),x=>recorded(x.prompt_tokens,x.prompt_coverage),x=>recorded(x.completion_tokens,x.completion_coverage)]);
+  $('matrix-count').textContent='Showing '+fmt(Math.min(300,matching.length))+' of '+fmt(matching.length)+' groups';
+}
 function recentOptions(id,field,label){const select=$(id),current=select.value;select.replaceChildren(new Option('All '+label,''));for(const value of [...new Set(lastData.recent.map(x=>String(x[field])))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'})))select.add(new Option(value,value));if(current&&![...select.options].some(option=>option.value===current))select.add(new Option(current,current));select.value=current}
 function renderRecent(){
   if(!lastData)return;
-  const query=$('recent-search').value.trim().toLowerCase(),coverage=$('recent-coverage').value;
+  const query=$('recent-search').value.trim().toLowerCase(),coverage=$('recent-coverage').value,latencyCoverage=$('recent-latency-coverage').value;
   const min=$('recent-min').value===''?null:Number($('recent-min').value),max=$('recent-max').value===''?null:Number($('recent-max').value);
+  const latencyMin=$('recent-latency-min').value===''?null:Number($('recent-latency-min').value),latencyMax=$('recent-latency-max').value===''?null:Number($('recent-latency-max').value);
   const selections=[['recent-listener','listener'],['recent-route','route'],['recent-model','model'],['recent-caller','caller_name'],['recent-ip','source_ip'],['recent-status','status']];
   const field=$('recent-sort').value,direction=$('recent-order').value==='asc'?1:-1;
-  const matching=lastData.recent.filter(x=>(!query||[stamp(x.at),x.listener,x.route,x.model,x.caller_name,x.source_ip,x.status,x.total].join(' ').toLowerCase().includes(query))&&selections.every(([id,name])=>!$(id).value||String(x[name])===$(id).value)&&(!coverage||(coverage==='recorded'?x.total!==null:x.total===null))&&(min===null||x.total!==null&&x.total>=min)&&(max===null||x.total!==null&&x.total<=max));
+  const matching=lastData.recent.filter(x=>(!query||[stamp(x.at),x.listener,x.route,x.model,x.caller_name,x.source_ip,x.status,x.total,x.duration_ms].join(' ').toLowerCase().includes(query))&&selections.every(([id,name])=>!$(id).value||String(x[name])===$(id).value)&&(!coverage||(coverage==='recorded'?x.total!==null:x.total===null))&&(!latencyCoverage||(latencyCoverage==='recorded'?x.duration_ms!==null:x.duration_ms===null))&&(min===null||x.total!==null&&x.total>=min)&&(max===null||x.total!==null&&x.total<=max)&&(latencyMin===null||x.duration_ms!==null&&x.duration_ms>=latencyMin)&&(latencyMax===null||x.duration_ms!==null&&x.duration_ms<=latencyMax));
   matching.sort((a,b)=>{const av=a[field],bv=b[field];if(av===null||bv===null)return av===null&&bv===null?b.at-a.at:av===null?1:-1;const comparison=typeof av==='number'?av-bv:String(av).localeCompare(String(bv),undefined,{numeric:true,sensitivity:'base'});return comparison*direction||b.at-a.at});
-  rows('recent',matching,[x=>stamp(x.at),x=>x.listener,x=>x.route,x=>x.model,x=>x.caller_name,x=>x.source_ip,x=>String(x.status),x=>x.total===null?'Not recorded':fmt(x.total)],'No requests match these filters.');
+  rows('recent',matching,[x=>stamp(x.at),x=>x.listener,x=>x.route,x=>x.model,x=>x.caller_name,x=>x.source_ip,x=>String(x.status),x=>x.total===null?'Not recorded':fmt(x.total),x=>ms(x.duration_ms)],'No requests match these filters.');
   $('recent-count').textContent='Showing '+fmt(matching.length)+' of '+fmt(lastData.recent.length)+' recent requests';
 }
-async function load(){if(busy)return;busy=true;try{const params=new URLSearchParams(),mode=$('mode').value;params.set('view',mode==='range'?$('unit').value:mode);if(mode==='range')params.set('amount',$('amount').value);if(mode==='day')params.set('date',$('day').value);const response=await fetch('/api/direct-usage?'+params,{headers:{'X-Local-Token':key},cache:'no-store'});const data=await response.json();if(!response.ok)throw Error(data.error||'Usage request failed');lastData=data;$('day').min=data.oldest_day;$('day').max=data.today;if(!$('day').value)$('day').value=data.today;const t=data.totals;$('requests').textContent=fmt(t.requests);$('failures').textContent=fmt(t.failures);$('tokens').textContent=recorded(t.total_tokens,t.total_coverage);$('coverage').textContent=fmt(t.total_coverage)+' of '+fmt(t.requests)+' requests have total-token counts';$('callers').textContent=fmt(data.source_ip_count);$('prompt-tokens').textContent=recorded(t.prompt_tokens,t.prompt_coverage);$('completion-tokens').textContent=recorded(t.completion_tokens,t.completion_coverage);$('token-note').textContent=fmt(t.token_requests)+' requests have some token usage; input and output totals may cover different requests.';const issues=[];if(data.dropped_records)issues.push(fmt(data.dropped_records)+' requests dropped by the recorder.');if(data.error_count)issues.push(data.error_count+' unreadable or invalid records. '+data.errors.join(' '));$('notice').textContent=issues.length?'Collection incomplete: '+issues.join(' '):data.available_files===0?'No recorder files were found for this period. Zero observed requests does not mean zero actual requests.':'Counts include observed requests reaching Ollama, including Open WebUI or proxy traffic. A file does not prove every request was captured.';draw('request-chart',data.buckets,'requests',data.start,data.end,'request-scale','request-start','request-end');draw('token-chart',data.buckets,'tokens',data.start,data.end,'token-scale','token-start','token-end');const cols=[x=>fmt(x.requests),x=>fmt(x.total_coverage)+' / '+fmt(x.requests),x=>recorded(x.prompt_tokens,x.prompt_coverage),x=>recorded(x.completion_tokens,x.completion_coverage),x=>recorded(x.total_tokens,x.total_coverage)];rows('models',data.models,[x=>x.model,...cols]);rows('sources',data.callers,[x=>x.caller_name,x=>x.caller,...cols]);$('period-title').textContent='Usage by '+data.period_unit+', caller, source IP and model';breakdown();rows('recent',data.recent,[x=>stamp(x.at),x=>x.listener,x=>x.route,x=>x.model,x=>x.caller_name,x=>x.source_ip,x=>String(x.status),x=>x.total===null?'Not recorded':fmt(x.total)]);$('updated').textContent='Updated '+new Date().toLocaleTimeString()}catch(error){$('updated').textContent='Could not load: '+error.message}finally{busy=false}}
+async function load(){if(busy)return;busy=true;try{const params=new URLSearchParams(),mode=$('mode').value;params.set('view',mode==='range'?$('unit').value:mode);if(mode==='range')params.set('amount',$('amount').value);if(mode==='day')params.set('date',$('day').value);const response=await fetch('/api/direct-usage?'+params,{headers:{'X-Local-Token':key},cache:'no-store'});const data=await response.json();if(!response.ok)throw Error(data.error||'Usage request failed');lastData=data;$('day').min=data.oldest_day;$('day').max=data.today;if(!$('day').value)$('day').value=data.today;const t=data.totals;$('requests').textContent=fmt(t.requests);$('failures').textContent=fmt(t.failures);$('tokens').textContent=recorded(t.total_tokens,t.total_coverage);$('coverage').textContent=fmt(t.total_coverage)+' of '+fmt(t.requests)+' requests have total-token counts';$('callers').textContent=fmt(data.source_ip_count);$('prompt-tokens').textContent=recorded(t.prompt_tokens,t.prompt_coverage);$('completion-tokens').textContent=recorded(t.completion_tokens,t.completion_coverage);$('token-note').textContent=fmt(t.token_requests)+' requests have some token usage; input and output totals may cover different requests.';const m=data.metrics;
+for(const [id,field] of [['latency-avg','avg_ms'],['latency-p50','p50_ms'],['latency-p95','p95_ms'],['latency-max','max_ms']])$(id).textContent=ms(m[field]);
+$('latency-coverage').textContent=fmt(m.duration_coverage)+' of '+fmt(t.requests)+' requests have latency readings';
+$('request-rate').textContent=fmt(m.requests_per_minute);
+$('http-4xx').textContent=fmt(m.http_4xx);
+$('http-5xx').textContent=fmt(m.http_5xx);
+$('failure-rate').textContent=pct(m.http_4xx+m.http_5xx,t.requests);
+const issues=[];if(data.dropped_records)issues.push(fmt(data.dropped_records)+' requests dropped by the recorder.');if(data.error_count)issues.push(data.error_count+' unreadable or invalid records. '+data.errors.join(' '));$('notice').textContent=issues.length?'Collection incomplete: '+issues.join(' '):data.available_files===0?'No recorder files were found for this period. Zero observed requests does not mean zero actual requests.':'Counts include observed requests reaching Ollama, including Open WebUI or proxy traffic. A file does not prove every request was captured.';draw('request-chart',data.buckets,'requests',data.start,data.end,'request-scale','request-start','request-end');draw('token-chart',data.buckets,'tokens',data.start,data.end,'token-scale','token-start','token-end');const cols=[x=>fmt(x.requests),x=>fmt(x.total_coverage)+' / '+fmt(x.requests),x=>recorded(x.prompt_tokens,x.prompt_coverage),x=>recorded(x.completion_tokens,x.completion_coverage),x=>recorded(x.total_tokens,x.total_coverage)];rows('models',data.models,[x=>x.model,...cols]);rows('sources',data.callers,[x=>x.caller_name,x=>x.caller,...cols]);$('period-title').textContent='Usage by '+data.period_unit+', caller, source IP and model';breakdown();renderMatrix();$('updated').textContent='Updated '+new Date().toLocaleTimeString()}catch(error){$('updated').textContent='Could not load: '+error.message}finally{busy=false}}
 async function refresh(){await load();if(lastData){for(const [id,field,label] of [['recent-listener','listener','listeners'],['recent-route','route','routes'],['recent-model','model','models'],['recent-caller','caller_name','callers'],['recent-ip','source_ip','IPs'],['recent-status','status','statuses']])recentOptions(id,field,label);renderRecent()}if(lastData&&lastData.access_log_files){$('notice').textContent+=' General 11434 access logs show real requests but do not record model or token counts. Private 11435 requests are absent unless recorder files exist. Only the last 8 MiB of each access log is read.';if(lastData.access_log_truncated)$('notice').textContent+=' Older access log entries are outside the read limit.'}}
 for(const id of ['mode','unit','amount','day'])$(id).addEventListener('change',()=>{controls();if($('mode').value!=='day'||$('day').value)refresh()});$('refresh').onclick=refresh;$('search').addEventListener('input',breakdown);
-for(const id of ['recent-search','recent-min','recent-max'])$(id).addEventListener('input',renderRecent);
-for(const id of ['recent-listener','recent-route','recent-model','recent-caller','recent-ip','recent-status','recent-coverage','recent-sort','recent-order'])$(id).addEventListener('change',renderRecent);
-$('recent-reset').onclick=()=>{for(const id of ['recent-search','recent-listener','recent-route','recent-model','recent-caller','recent-ip','recent-status','recent-coverage','recent-min','recent-max'])$(id).value='';$('recent-sort').value='at';$('recent-order').value='desc';renderRecent()};
+for(const id of ['matrix-search'])$(id).addEventListener('input',renderMatrix);
+for(const id of ['matrix-sort','matrix-order'])$(id).addEventListener('change',renderMatrix);
+for(const id of ['recent-search','recent-min','recent-max','recent-latency-min','recent-latency-max'])$(id).addEventListener('input',renderRecent);
+for(const id of ['recent-listener','recent-route','recent-model','recent-caller','recent-ip','recent-status','recent-coverage','recent-latency-coverage','recent-sort','recent-order'])$(id).addEventListener('change',renderRecent);
+$('recent-reset').onclick=()=>{for(const id of ['recent-search','recent-listener','recent-route','recent-model','recent-caller','recent-ip','recent-status','recent-coverage','recent-latency-coverage','recent-min','recent-max','recent-latency-min','recent-latency-max'])$(id).value='';$('recent-sort').value='at';$('recent-order').value='desc';renderRecent()};
 controls();refresh();setInterval(refresh,15000);
 </script></body></html>'''

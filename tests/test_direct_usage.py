@@ -35,6 +35,7 @@ class DirectUsageTests(unittest.TestCase):
             {"schema": 1, "at": self.recent, "listener": "11434",
              "model": "codestral:22b", "source_ip": "10.0.0.8", "route": "/api/chat",
              "status": 200, "prompt_tokens": 12, "completion_tokens": 8,
+             "duration_ms": 420,
              "prompt": "must never appear in the dashboard"},
             {"schema": 1, "at": self.older, "listener": "11434",
              "model": "codestral:22b", "source_ip": "10.0.0.8", "route": "/api/chat",
@@ -43,7 +44,8 @@ class DirectUsageTests(unittest.TestCase):
         self._write(self.private, [
             {"schema": 1, "at": self.recent + 10, "listener": "11435",
              "model": "gemma4:31b", "source_ip": "127.0.0.1", "route": "/v1/chat/completions",
-             "status": 500, "prompt_tokens": None, "completion_tokens": None},
+             "status": 500, "prompt_tokens": None, "completion_tokens": None,
+             "duration_ms": 1800},
         ])
 
     @staticmethod
@@ -67,6 +69,30 @@ class DirectUsageTests(unittest.TestCase):
         self.assertEqual({row["caller"] for row in data["callers"]}, {"10.0.0.8", "127.0.0.1"})
         self.assertNotIn("must never appear", json.dumps(data))
         self.assertTrue(data["complete"])
+
+    def test_latency_metrics_matrix_and_legacy_coverage(self):
+        data = self._read()
+        self.assertEqual(data["metrics"]["duration_coverage"], 2)
+        self.assertEqual(data["metrics"]["avg_ms"], 1110)
+        self.assertEqual(data["metrics"]["p50_ms"], 420)
+        self.assertEqual(data["metrics"]["p95_ms"], 1800)
+        self.assertEqual((data["metrics"]["http_4xx"], data["metrics"]["http_5xx"]), (0, 1))
+        private = next(row for row in data["matrix"] if row["listener"] == "11435")
+        self.assertEqual(private["http_5xx"], 1)
+        self.assertEqual(private["p95_ms"], 1800)
+        self.assertEqual(private["duration_coverage"], 1)
+        with self.general.open("a", encoding="utf-8") as out:
+            out.write(json.dumps({"schema": 1, "at": self.recent + 5,
+                                  "listener": "11434", "model": "old",
+                                  "source_ip": "10.0.0.8", "route": "/api/chat",
+                                  "status": 429}) + "\n")
+        older = self._read()
+        self.assertEqual(older["metrics"]["duration_coverage"], 2)
+        self.assertEqual(older["metrics"]["http_4xx"], 1)
+        self.assertIsNone(next(row for row in older["recent"]
+                               if row["model"] == "old")["duration_ms"])
+        self.assertIsNone(next(row for row in older["matrix"]
+                               if row["model"] == "old")["p95_ms"])
 
     def test_known_callers_are_named_and_other_traffic_is_unidentified(self):
         self._write(self.general, [

@@ -34,6 +34,7 @@ type directUsageEvent struct {
 	PromptTokens     *int   `json:"prompt_tokens,omitempty"`
 	CompletionTokens *int   `json:"completion_tokens,omitempty"`
 	TotalTokens      *int   `json:"total_tokens,omitempty"`
+	DurationMS       int64  `json:"duration_ms"`
 	Dropped          uint64 `json:"dropped,omitempty"`
 }
 
@@ -86,6 +87,7 @@ func (s *Server) directUsageMiddleware() gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		started := time.Now()
 		c.Next()
 		if listener == "unknown" {
 			return
@@ -94,6 +96,7 @@ func (s *Server) directUsageMiddleware() gin.HandlerFunc {
 			Schema: 1, At: time.Now().Unix(), Listener: listener,
 			Route: c.Request.URL.Path, Status: c.Writer.Status(),
 			Model: "Unknown model", SourceIP: "Unknown IP",
+			DurationMS: time.Since(started).Milliseconds(),
 		}
 		if value, ok := c.Get(directUsageModelKey); ok {
 			if model, ok := value.(string); ok && model != "" && len(model) <= 256 {

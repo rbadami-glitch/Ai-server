@@ -1,11 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
@@ -30,6 +32,7 @@ func TestDirectUsageRecordsFinalStreamOnly(t *testing.T) {
 	router := gin.New()
 	router.Use(s.directUsageMiddleware())
 	router.POST("/api/chat", func(c *gin.Context) {
+		time.Sleep(15 * time.Millisecond)
 		c.Set(directUsageModelKey, "gemma4:31b")
 		ch := make(chan any, 2)
 		ch <- api.ChatResponse{Model: "gemma4:31b", Done: false}
@@ -52,7 +55,8 @@ func TestDirectUsageRecordsFinalStreamOnly(t *testing.T) {
 			event.Listener != "11434" || event.Status != 200 ||
 			event.PromptTokens == nil || *event.PromptTokens != 12 ||
 			event.CompletionTokens == nil || *event.CompletionTokens != 8 ||
-			event.TotalTokens == nil || *event.TotalTokens != 20 {
+				event.TotalTokens == nil || *event.TotalTokens != 20 ||
+			event.DurationMS < 10 {
 			t.Fatalf("incorrect event: %+v", event)
 		}
 		encoded, err := json.Marshal(event)
@@ -61,6 +65,9 @@ func TestDirectUsageRecordsFinalStreamOnly(t *testing.T) {
 		}
 		if json.Valid(encoded) == false {
 			t.Fatal("event did not encode")
+		}
+		if !bytes.Contains(encoded, []byte(`"duration_ms":`)) {
+			t.Fatal("duration was not recorded")
 		}
 	default:
 		t.Fatal("missing usage event")
@@ -100,7 +107,8 @@ func TestDirectUsagePrivateFailureKeepsMissingTokensUnknown(t *testing.T) {
 	case event := <-recorder.queue:
 		if event.Listener != "11435" || event.Status != 500 ||
 			event.Model != "gemma4:31b" || event.SourceIP != "127.0.0.1" ||
-			event.PromptTokens != nil || event.CompletionTokens != nil {
+				event.PromptTokens != nil || event.CompletionTokens != nil ||
+				event.DurationMS < 0 {
 			t.Fatalf("incorrect private failure event: %+v", event)
 		}
 	default:
