@@ -82,6 +82,7 @@ func TestForceChatModelWiredIntoOllamaRoutes(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodPost, "/api/generate",
 		strings.NewReader(`{"model":"devstral:latest","prompt":"","top_logprobs":-1}`))
+	request.Host = "127.0.0.1:11435"
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	routes.ServeHTTP(response, request)
