@@ -102,6 +102,9 @@ class DirectUsageTests(unittest.TestCase):
             {"schema": 1, "at": self.recent + 1, "listener": "11434",
              "model": "gemma4:31b", "source_ip": "10.104.74.13",
              "route": "/api/chat", "status": 200},
+            {"schema": 1, "at": self.recent + 1, "listener": "11434",
+             "model": "gemma4:31b", "source_ip": "10.104.74.13",
+             "route": "/v1/chat/completions", "status": 500},
             {"schema": 1, "at": self.recent + 2, "listener": "11434",
              "model": "gemma4:31b", "source_ip": "10.104.74.10",
              "route": "/api/chat", "status": 200},
@@ -121,6 +124,7 @@ class DirectUsageTests(unittest.TestCase):
         self.assertEqual(labels[("10.104.74.10", "/v1/chat/completions")],
                          "Open WebUI")
         self.assertEqual(labels[("10.104.74.13", "/api/chat")], "LiteLLM")
+        self.assertEqual(labels[("10.104.74.13", "/v1/chat/completions")], "LiteLLM")
         self.assertEqual(labels[("10.104.74.10", "/api/chat")], "AI server (local)")
         self.assertEqual(labels[("10.104.74.21", "/v1/chat/completions")],
                          "PCB server")
