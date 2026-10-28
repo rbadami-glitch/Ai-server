@@ -6,26 +6,21 @@ param(
     [string]$ServiceName
 )
 
-if ($Mode -eq 'Apply') {
-    throw 'Candidate 1417549 failed its routing probe and was rolled back. Do not retry this artifact.'
-}
-
 # Switch one Ollama service at a time. Keep the latency recorder and its
 # environment intact for rollback; never restart the Windows OS.
 $ErrorActionPreference = 'Stop'
 $install = 'C:\Users\v_skumard\AppData\Local\Programs\Ollama'
 $currentExe = Join-Path $install 'ollama-direct-usage-latency-7a6bed6.exe'
-$candidateExe = Join-Path $install 'ollama-direct-usage-gemma-1417549.exe'
+$candidateExe = Join-Path $install 'ollama-direct-usage-gemma-213d4bd.exe'
 $dll = Join-Path $install 'libwinpthread-1.dll'
-$zip = Join-Path $PSScriptRoot 'artifacts\ollama-direct-usage-1417549-windows-amd64.zip'
+$zip = Join-Path $PSScriptRoot 'artifacts\ollama-direct-usage-213d4bd-windows-amd64.zip'
 $usageDir = 'E:\AI\ollama\OpenWebUI-Monitoring\Direct-Usage'
 $port = if ($ServiceName -eq 'CWAI-Ollama') { 11434 } else { 11435 }
 $registryPath = "SYSTEM\CurrentControlSet\Services\$ServiceName\Parameters"
-$forceSetting = 'OLLAMA_FORCE_CHAT_MODEL=gemma4:31b'
 $currentHash = '619AAF894B23884F1A862F44FC0B5DE68A4BDB486AF258E2F9C63850261884F5'
-$candidateHash = '530F0874D0907D7E6DD4CB23A445824B06A7818FB3E48D7ABCBD59EAE23F34CA'
+$candidateHash = 'C993DBA4E8194BC7BC0D3E7E6E34E256E9D0F78BE2BFFAA3C82BFAAAE7374B4F'
 $dllHash = 'F5042E8E3D21EDCE20C1BC99445F551B89212403164E9388D2C6F48D6D6BCB78'
-$zipHash = '8FFA43C4A6E93C5E42439E9A2BF042B307DF0276B92E4F1006D95D90CB96DE4F'
+$zipHash = '6902E504C581FE6348F0E9DE2D5DB682908F44B70F5B065F4609A7D473F0EB72'
 
 function Assert-Hash([string]$path, [string]$expected) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing file: $path" }
@@ -145,7 +140,7 @@ try {
     if ($directory -ine $install -or $parameters -ne 'serve' -or
         $key.GetValueKind('AppEnvironmentExtra') -ne [Microsoft.Win32.RegistryValueKind]::MultiString -or
         @($extra | Where-Object { $_ -eq "OLLAMA_DIRECT_USAGE_DIR=$usageDir" }).Count -ne 1 -or
-        @($extra | Where-Object { $_ -like 'OLLAMA_FORCE_CHAT_MODEL=*' -and $_ -ne $forceSetting }).Count) {
+        @($extra | Where-Object { $_ -like 'OLLAMA_FORCE_CHAT_MODEL=*' }).Count) {
         throw 'Unexpected NSSM configuration; no change made.'
     }
     Assert-Hash $currentExe $currentHash
@@ -158,15 +153,13 @@ try {
         [pscustomobject]@{
             Service = $ServiceName; State = $service.State; Port = $port
             CurrentExecutable = $app; Candidate = $candidateExe
-            ForceGemma = @($extra | Where-Object { $_ -eq $forceSetting }).Count -eq 1
+            CandidateRouting = 'Built in; no environment change'
             ArtifactHashVerified = $true; RuntimeDllHashVerified = $true
         } | Format-List
         return
     }
     if ($Mode -eq 'Apply') {
-        if ($app -ine $currentExe -or @($extra | Where-Object { $_ -like 'OLLAMA_FORCE_CHAT_MODEL=*' }).Count) {
-            throw 'Expected latency recorder or clean routing setting was not found.'
-        }
+        if ($app -ine $currentExe) { throw 'Expected latency recorder was not found.' }
         Assert-Healthy $ServiceName $currentExe $port
         Ensure-Candidate
         $version = & $candidateExe --version
@@ -179,8 +172,6 @@ try {
             Wait-State $ServiceName ([System.ServiceProcess.ServiceControllerStatus]::Stopped)
             $changed = $true
             $key.SetValue('Application', $candidateExe, $appKind)
-            $key.SetValue('AppEnvironmentExtra', [string[]]@($extra + $forceSetting),
-                [Microsoft.Win32.RegistryValueKind]::MultiString)
             Start-Service -Name $ServiceName -ErrorAction Stop
             Assert-Healthy $ServiceName $candidateExe $port
             Assert-RoutingRecord $port
@@ -195,8 +186,6 @@ try {
                 }
                 if ($changed) {
                     $key.SetValue('Application', $currentExe, $appKind)
-                    $key.SetValue('AppEnvironmentExtra', $extra,
-                        [Microsoft.Win32.RegistryValueKind]::MultiString)
                 }
                 Start-Service -Name $ServiceName -ErrorAction Stop
                 Assert-Healthy $ServiceName $currentExe $port
@@ -207,7 +196,7 @@ try {
         }
         return
     }
-    if ($app -ine $candidateExe -or @($extra | Where-Object { $_ -eq $forceSetting }).Count -ne 1) {
+    if ($app -ine $candidateExe) {
         throw 'Service is not running the expected Gemma routing candidate.'
     }
     Assert-Hash $candidateExe $candidateHash
@@ -217,8 +206,6 @@ try {
         Wait-State $ServiceName ([System.ServiceProcess.ServiceControllerStatus]::Stopped)
         $changed = $true
         $key.SetValue('Application', $currentExe, $appKind)
-        $key.SetValue('AppEnvironmentExtra', [string[]]@($extra | Where-Object { $_ -ne $forceSetting }),
-            [Microsoft.Win32.RegistryValueKind]::MultiString)
         Start-Service -Name $ServiceName -ErrorAction Stop
         Assert-Healthy $ServiceName $currentExe $port
         Write-Output "$ServiceName restored to the latency recorder on port $port."
@@ -231,8 +218,6 @@ try {
             }
             if ($changed) {
                 $key.SetValue('Application', $candidateExe, $appKind)
-                $key.SetValue('AppEnvironmentExtra', $extra,
-                    [Microsoft.Win32.RegistryValueKind]::MultiString)
             }
             Start-Service -Name $ServiceName -ErrorAction Stop
             Assert-Healthy $ServiceName $candidateExe $port
