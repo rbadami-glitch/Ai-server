@@ -1,16 +1,14 @@
 package server
 
-// When enabled on an Ollama service, force every chat and text-generation
-// request to the local Gemma model before compatibility or cloud middleware
-// chooses an upstream. Embedding and management endpoints are untouched.
+// Force every chat and text-generation request to the local Gemma model before
+// compatibility or cloud middleware chooses an upstream. Embedding and
+// management endpoints are untouched.
 
 import (
 	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -56,8 +54,4 @@ func forceChatModelMiddleware() gin.HandlerFunc {
 		c.Request.Header.Del("Content-Length")
 		c.Next()
 	}
-}
-
-func forceChatModelEnabled() bool {
-	return strings.EqualFold(strings.TrimSpace(os.Getenv("OLLAMA_FORCE_CHAT_MODEL")), forcedChatModel)
 }

@@ -71,13 +71,11 @@ index f8d06b7..8e130bc 100644
  }
  
  func (s *Server) PullHandler(c *gin.Context) {
-@@ -1825,6 +1843,12 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
+@@ -1825,6 +1843,10 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
  		cors.New(corsConfig),
  		allowedHostsMiddleware(s.addr),
  	)
-+	if forceChatModelEnabled() {
-+		r.Use(forceChatModelMiddleware())
-+	}
++	r.Use(forceChatModelMiddleware())
 +	if activeDirectUsageRecorder != nil {
 +		r.Use(s.directUsageMiddleware())
 +	}

@@ -6,6 +6,10 @@ param(
     [string]$ServiceName
 )
 
+if ($Mode -eq 'Apply') {
+    throw 'Candidate 1417549 failed its routing probe and was rolled back. Do not retry this artifact.'
+}
+
 # Switch one Ollama service at a time. Keep the latency recorder and its
 # environment intact for rollback; never restart the Windows OS.
 $ErrorActionPreference = 'Stop'

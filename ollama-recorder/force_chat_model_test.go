@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -67,13 +68,32 @@ func TestForceChatModelLeavesEmbeddingsAndInvalidJSON(t *testing.T) {
 	}
 }
 
-func TestForceChatModelOptIn(t *testing.T) {
-	t.Setenv("OLLAMA_FORCE_CHAT_MODEL", "")
-	if forceChatModelEnabled() {
-		t.Fatal("empty setting enabled routing")
+func TestForceChatModelWiredIntoOllamaRoutes(t *testing.T) {
+	previous := activeDirectUsageRecorder
+	recorder := &directUsageRecorder{queue: make(chan directUsageEvent, 1)}
+	recorder.listener.Store("unknown")
+	activeDirectUsageRecorder = recorder
+	t.Cleanup(func() { activeDirectUsageRecorder = previous })
+
+	s := &Server{addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 11435}}
+	routes, err := s.GenerateRoutes(nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Setenv("OLLAMA_FORCE_CHAT_MODEL", "gemma4:31b")
-	if !forceChatModelEnabled() {
-		t.Fatal("Gemma setting did not enable routing")
+	request := httptest.NewRequest(http.MethodPost, "/api/generate",
+		strings.NewReader(`{"model":"devstral:latest","prompt":"","top_logprobs":-1}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	routes.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	select {
+	case event := <-recorder.queue:
+		if event.Model != forcedChatModel || event.Route != "/api/generate" {
+			t.Fatalf("routing event = %+v", event)
+		}
+	default:
+		t.Fatal("routing event was not recorded")
 	}
 }
