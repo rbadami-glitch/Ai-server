@@ -6,7 +6,15 @@ This plan is for the two existing Windows Ollama services on the AI server. It d
 
 For the latency update, build a fresh candidate from the commit that adds `duration_ms`. The already-running recorder executable cannot emit this field merely because the dashboard or Git checkout was updated. Existing JSONL rows remain valid; their latency is unavailable. The dashboard can be updated independently before the new recorder build is deployed.
 
-As of 28 October, both H100 NVL devices were absent from the AI server VM after a Configuration Manager initiated restart. Do not cut over either Ollama service while the GPUs are unavailable. Recheck GPU presence, normal inference, and the preflight below before scheduling a service restart. A service cutover is a separate operational step.
+As of 28 October, both H100 NVL devices were absent from the AI server VM after a Configuration Manager initiated restart. The operator has explicitly chosen to proceed with the recorder upgrade while this GPU issue remains. The timing measurement does not require a GPU, but requests made during the outage do not represent normal GPU inference latency. Restart only one Ollama service at a time and verify it before changing the other. Do not reboot Windows.
+
+## Upgrade the already-running recorder to capture latency
+
+The versioned ZIP at ollama-recorder/artifacts/ollama-direct-usage-7a6bed6-windows-amd64.zip is a verified build of recorder source 7a6bed6. It was committed to this private repository at the operator's explicit request for transfer to the AI server. Its SHA-256 is 421DD04EE99F638AC41A142EC8A71EC039E37BE5E17D365E2B3E23F32418394A.
+
+Use Upgrade-CW-Ollama-Recorder-Latency.ps1 from an elevated PowerShell on ZUSEVRAI01. Plan mode is read-only. Apply mode checks the old executable, new artifact, existing runtime DLL and NSSM settings; extracts the new executable under a unique name beside the existing Ollama executable; then stops and starts **only the selected service**. It changes only that service's NSSM Application value, leaving the environment, old executable, DLL, recorder files, ports and other service in place. It verifies the service process, Ollama version, listener and a synthetic missing-model request with a recorded duration_ms. A failed verification attempts to restore the old executable and restart the selected service. Rollback mode reverses a successful upgrade for one service. The probe is excluded from dashboard totals.
+
+Run Plan mode for both services, then Apply mode for CWAI-Gemma4-Ollama and verify the private listener before applying to CWAI-Ollama. After both pass, make an authorized real request through each route and check that new dashboard rows show latency. Old rows remain "Not recorded". Keep the old executable for rollback. No prompt or answer text enters the recorder.
 
 1. Run the private repository's **Build Ollama request recorder** workflow manually. It checks out Ollama source commit `87cff95af86a1d8be1d81ce75fafc9bb4e67d002` (tag `v0.30.6`), copies these two recorder files, applies `routes.patch`, runs the synthetic recorder tests, and builds a Windows amd64 `ollama-direct-usage.exe`.
 2. Download the workflow artifact. Check that its `BUILD.txt` source commit and SHA-256 match the executable. Preserve the artifact outside the Git checkout. The workflow uploads no AI-server data.
