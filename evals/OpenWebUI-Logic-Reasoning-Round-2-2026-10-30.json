@@ -1,0 +1,98 @@
+{
+  "suite_version": "2026-10-30-logic-round-2-v1",
+  "purpose": "Harder fictional reasoning checks with explicit, self-contained answers; no private chat content",
+  "cases": [
+    {
+      "id": "R2-01",
+      "area": "explicit as-of date versus current context",
+      "messages": [
+        {"role": "user", "content": "Maya was born on 5 November 1988. For a historical report dated 1 December 2025, how old was she on that report date? Use the report date, not today's date."}
+      ],
+      "review": ["Answers 37 years old on 1 December 2025"],
+      "red_flags": ["Uses the present date", "Answers 36 or 38"]
+    },
+    {
+      "id": "R2-02",
+      "area": "weighted average",
+      "messages": [
+        {"role": "user", "content": "Nine tests score 80 points each and one test scores 0. All ten tests have equal weight. What is the average score, and why is the average of 80 and 0 the wrong calculation?"}
+      ],
+      "review": ["Average is 72", "Explains that 80 occurs nine times and 0 once"],
+      "red_flags": ["Answers 40", "Claims the two distinct scores have equal frequency"]
+    },
+    {
+      "id": "R2-03",
+      "area": "reverse percentage",
+      "messages": [
+        {"role": "user", "content": "A price of 100 is reduced by 20% to 80. By what percentage of 80 must it increase to get back to 100? State the base used for the percentage."}
+      ],
+      "review": ["Answers 25%", "Uses 80 as the base because 20 divided by 80 is 25%"],
+      "red_flags": ["Answers 20%", "Uses 100 as the base for the required increase"]
+    },
+    {
+      "id": "R2-04",
+      "area": "invalid converse",
+      "messages": [
+        {"role": "user", "content": "The only rule is: if a request is approved, it receives a green badge. A request has a green badge. Can you conclude it was approved? Answer yes or no and explain whether the rule excludes other ways to get a badge."}
+      ],
+      "review": ["Answers no", "Explains that the stated rule does not exclude other ways to receive a badge"],
+      "red_flags": ["Treats having a green badge as proof of approval", "Adds an unstated only-if rule"]
+    },
+    {
+      "id": "R2-05",
+      "area": "rate scaling",
+      "messages": [
+        {"role": "user", "content": "Two identical machines together make two widgets in two minutes at a constant rate. How many minutes do four such machines need to make eight widgets? Show the per-machine rate."}
+      ],
+      "review": ["Answers 4 minutes", "Each machine makes 0.5 widget per minute; four make 2 per minute"],
+      "red_flags": ["Answers 2 or 8 minutes", "Assumes one machine makes one widget per minute"]
+    },
+    {
+      "id": "R2-06",
+      "area": "conditional probability without replacement",
+      "messages": [
+        {"role": "user", "content": "A bag has three red balls and two blue balls. Draw two balls without replacement. What is the probability that the first is red and the second is blue? Give an exact fraction and show both factors."}
+      ],
+      "review": ["Answers 3/10", "Uses 3/5 for first red and 2/4 for second blue"],
+      "red_flags": ["Uses 2/5 for the second draw", "Answers 6/25"]
+    },
+    {
+      "id": "R2-07",
+      "area": "overlapping time intervals",
+      "messages": [
+        {"role": "user", "content": "A room is occupied from 09:00 to 11:00 for meeting A and from 10:00 to 12:00 for meeting B on the same day. For how many distinct hours is the room occupied by at least one meeting? Do not count the overlap twice."}
+      ],
+      "review": ["Answers 3 hours, from 09:00 through 12:00"],
+      "red_flags": ["Answers 4 hours by double-counting 10:00 to 11:00"]
+    },
+    {
+      "id": "R2-08",
+      "area": "later user correction versus earlier assistant error",
+      "messages": [
+        {"role": "user", "content": "For the test plan, run X before Y and Y before Z."},
+        {"role": "assistant", "content": "Understood. I will run Z before Y before X."},
+        {"role": "user", "content": "Correction to my original instruction: run Z before X, but keep X before Y. Ignore the assistant's reversed summary. What order satisfies my latest instructions?"}
+      ],
+      "review": ["Answers Z, X, Y", "Uses the user's correction and X-before-Y requirement"],
+      "red_flags": ["Repeats Z, Y, X from the earlier assistant", "Claims X, Y, Z remains required after the correction"]
+    },
+    {
+      "id": "R2-09",
+      "area": "missing overlap information",
+      "messages": [
+        {"role": "user", "content": "In a group of 20 people, 12 know Python and 11 know SQL. I have not said how many know both. Can you determine the exact number who know at least one of the two? If not, give the smallest and largest possible numbers."}
+      ],
+      "review": ["Says the exact union cannot be determined", "Minimum is 12 and maximum is 20"],
+      "red_flags": ["Claims exactly 23 or exactly 20", "Gives a minimum below 12 or maximum above 20"]
+    },
+    {
+      "id": "R2-10",
+      "area": "correlation versus causation",
+      "messages": [
+        {"role": "user", "content": "A store changed its website on Monday. Sales rose on Tuesday. From these two facts alone, can we conclude that the website change caused the rise? Give one other possible explanation."}
+      ],
+      "review": ["Answers no", "Names a plausible alternative such as a promotion, seasonality, or random variation"],
+      "red_flags": ["States the website change definitely caused the rise", "Claims temporal order alone proves causation"]
+    }
+  ]
+}
