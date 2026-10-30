@@ -1,0 +1,94 @@
+{
+  "suite_version": "2026-10-30-logic-v1",
+  "purpose": "New self-contained reasoning checks; fictional people and data; no private chat content",
+  "cases": [
+    {
+      "id": "RL01",
+      "area": "age before birthday",
+      "messages": [{"role": "user", "content": "Maya was born on 5 November 1988. As of 30 October 2026, how old is she, and how old will she turn on her next birthday? Give both numbers."}],
+      "review": ["Current age is 37", "She turns 38 on 5 November 2026"],
+      "red_flags": ["Says she is already 38 on 30 October 2026", "Uses today's real date instead of the as-of date in the question"]
+    },
+    {
+      "id": "RL02",
+      "area": "date rollover",
+      "messages": [{"role": "user", "content": "A task starts at 23:50 on 30 October 2026 and lasts 25 minutes. The start and finish use the same timezone. What is the finish date and time?"}],
+      "review": ["Finish is 00:15 on 31 October 2026"],
+      "red_flags": ["Keeps the finish on 30 October", "Gives 00:25 or 23:75"]
+    },
+    {
+      "id": "RL03",
+      "area": "inventory arithmetic",
+      "messages": [{"role": "user", "content": "We start with 18 units on hand and none reserved. We ship 3 units, receive 5 units, and then reserve 4 of the units on hand. How many are on hand, and how many are available to new customers?"}],
+      "review": ["20 units on hand", "16 units available after the reservation"],
+      "red_flags": ["Subtracts reserved units from on-hand count", "Gives 16 on hand or 20 available"]
+    },
+    {
+      "id": "RL04",
+      "area": "sequential percentages",
+      "messages": [{"role": "user", "content": "A value starts at 200, increases by 25%, then decreases by 20% of its new value. What is the final value? Did it change overall?"}],
+      "review": ["Final value is 200", "Overall change is 0%"],
+      "red_flags": ["Says the final value is 210 or a 5% increase", "Applies the 20% decrease to the original 200"]
+    },
+    {
+      "id": "RL05",
+      "area": "invalid logical inference",
+      "messages": [{"role": "user", "content": "All inspected items are tagged. Some tagged items are rejected. Does it follow that some inspected items are rejected? Answer yes or no and give a one-sentence reason."}],
+      "review": ["Answers no", "Explains that the rejected tagged items could be different from the inspected items"],
+      "red_flags": ["Claims that some inspected items must be rejected"]
+    },
+    {
+      "id": "RL06",
+      "area": "ordering constraints",
+      "messages": [{"role": "user", "content": "Four jobs A, B, C and D must each run once. A runs before B; B runs before C; D runs after C. Give the only valid order."}],
+      "review": ["Order is A, B, C, D"],
+      "red_flags": ["Puts D before C", "Offers multiple orders when the constraints fix one"]
+    },
+    {
+      "id": "RL07",
+      "area": "necessary conditions",
+      "messages": [{"role": "user", "content": "A release may ship only if QA has approved it AND the owner has signed off. QA has approved it, but the owner has not signed off. May it ship under this rule?"}],
+      "review": ["Answers no", "Identifies missing owner sign-off"],
+      "red_flags": ["Treats QA approval alone as sufficient"]
+    },
+    {
+      "id": "RL08",
+      "area": "truth and lies",
+      "messages": [{"role": "user", "content": "Exactly one of Anna and Ben tells the truth, and the other lies. Anna says, 'Ben is lying.' Ben says, 'We are both telling the truth.' Who tells the truth? Explain briefly."}],
+      "review": ["Anna tells the truth and Ben lies", "Notes Ben's claim cannot be true if exactly one tells the truth"],
+      "red_flags": ["Says Ben tells the truth", "Says both tell the truth"]
+    },
+    {
+      "id": "RL09",
+      "area": "insufficient information",
+      "messages": [{"role": "user", "content": "Two orders are worth $40 and $70. One order was cancelled, but I have not said which one. What is the exact remaining total?"}],
+      "review": ["Says the exact total cannot be determined", "Identifies $40 or $70 as the possible remaining totals"],
+      "red_flags": ["Gives one exact remaining total without stating an assumption"]
+    },
+    {
+      "id": "RL10",
+      "area": "correcting prior assistant error",
+      "messages": [
+        {"role": "user", "content": "My plan says task X must happen before task Y."},
+        {"role": "assistant", "content": "Understood: task Y comes before task X."},
+        {"role": "user", "content": "The previous assistant response reversed my instruction. Based on my original plan, which task comes first?"}
+      ],
+      "review": ["Answers X comes before Y", "Does not repeat the previous assistant's reversal"],
+      "red_flags": ["Answers Y comes first"]
+    },
+    {
+      "id": "RL11",
+      "area": "denominator discipline",
+      "messages": [{"role": "user", "content": "Ten test cases were planned. Eight were run and all eight passed; two were not run. What percentage passed among the cases run, and what percentage of all planned cases have passed? Do not label unrun cases as failed."}],
+      "review": ["100% passed among the eight run cases", "80% of all ten planned cases have passed", "Two cases remain unrun, not failed"],
+      "red_flags": ["Claims all ten passed", "Calls the two unrun cases failures"]
+    },
+    {
+      "id": "RL12",
+      "area": "contradictory constraints",
+      "messages": [{"role": "user", "content": "A schedule requires A before B and B before A. Both requirements are strict, with no simultaneous start. Can you give a valid order? If not, identify the conflict."}],
+      "review": ["Says no valid order exists", "Identifies the A-before-B versus B-before-A conflict"],
+      "red_flags": ["Invents an order that satisfies both strict requirements"]
+    }
+  ]
+}
