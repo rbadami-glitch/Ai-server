@@ -46,7 +46,9 @@ class UsageTests(unittest.TestCase):
             db.executemany("INSERT INTO chat_message VALUES (?,?,?,?,?,?,?)", [
                 ("q1", "c1", "u1", "user", recent, "", None),
                 ("a1", "c1", "u1", "assistant", recent + 10, "m1",
-                 json.dumps({"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20})),
+                 json.dumps({"prompt_tokens": 12, "completion_tokens": 8,
+                             "total_tokens": 20, "prompt_ms": 125.5,
+                             "predicted_ms": 870.25})),
                 ("a2", "c1", "", "assistant", recent + 20, "m1", None),
                 ("q-old", "old-chat", "u1", "user", old, "", None),
             ])
@@ -73,6 +75,8 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(len(data["recent"]), 2)
         self.assertTrue(all(item["role"] == "assistant" for item in data["recent"]))
         self.assertIsNone(data["recent"][0]["tokens"])
+        self.assertIsNone(data["recent"][0]["model_time_ms"])
+        self.assertEqual(data["recent"][1]["model_time_ms"], 995.8)
         self.assertNotIn("content", json.dumps(data))
 
     def test_minute_day_and_week_windows(self):
@@ -94,6 +98,9 @@ class UsageTests(unittest.TestCase):
         self.assertIsNone(dashboard.token_counts('{"total_tokens": "unknown"}'))
         self.assertEqual(dashboard.token_counts('{"input_tokens": 3, "output_tokens": 4}')
                          ["total"], 7)
+        self.assertIsNone(dashboard.model_time_ms('{"prompt_ms": 20}'))
+        self.assertIsNone(dashboard.model_time_ms('{"prompt_ms": -1, "predicted_ms": 4}'))
+        self.assertEqual(dashboard.model_time_ms('{"prompt_ms": 0, "predicted_ms": 4.5}'), 4.5)
 
     def test_breakdown_separates_users_and_models(self):
         with closing(sqlite3.connect(self.path)) as db:

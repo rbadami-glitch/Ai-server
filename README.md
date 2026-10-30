@@ -30,6 +30,8 @@ The dashboard reads Open WebUI's SQLite database in read-only mode. It prints a 
 
 "Chat prompts" counts saved `user` messages and "assistant responses" counts saved `assistant` messages. These are **not** all HTTP/API requests to Open WebUI, and a request that never became a saved message may be absent. Token figures come only from assistant messages with usable saved `usage` fields. The page shows coverage so missing token counts are not misrepresented as zero. It breaks down recorded input, output, and total tokens by model, caller, and time period (minutes for ranges up to an hour, hours for longer ranges or a selected day, and days for a week). The caller uses the saved message user ID, falling back to the chat owner when needed. It shows recent message metadata but no chat text. The database may retain more than seven days; the page intentionally limits its date selector to the last seven days.
 
+The recent responses table also shows **model time** where the saved usage contains both `prompt_ms` and `predicted_ms`. Their sum is prompt processing plus generation time, not full user-visible latency: it omits queueing, network, and other processing. A read-only check of the newest 100 assistant responses on 30 October found these fields in 60 records and no usable usage object in 14 records. Missing token or time values display as "Not recorded" rather than zero. The separate Ollama requests page shows full server-side request duration when the recorder saved `duration_ms`.
+
 Run it on the AI server after confirming the database path, using a separate PowerShell window from the GPU dashboard:
 
 ```powershell

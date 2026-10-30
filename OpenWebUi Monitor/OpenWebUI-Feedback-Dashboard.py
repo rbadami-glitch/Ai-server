@@ -10,6 +10,7 @@ used. The Open WebUI database is opened read-only; this script never edits it.
 
 import argparse
 import json
+import math
 import secrets
 import sqlite3
 import sys
@@ -368,6 +369,18 @@ def token_counts(raw):
     return {"prompt": prompt, "completion": completion, "total": total}
 
 
+def model_time_ms(raw):
+    """Return recorded model work time, not end-to-end request latency."""
+    usage = parse_json(raw)
+    if not isinstance(usage, dict):
+        return None
+    values = (usage.get("prompt_ms"), usage.get("predicted_ms"))
+    if any(isinstance(value, bool) or not isinstance(value, (int, float))
+           or not math.isfinite(value) or value < 0 for value in values):
+        return None
+    return round(sum(values), 1)
+
+
 def read_usage(path, view="hours", amount=2, selected_day=None, now=None):
     start, end, oldest, today = usage_window(view, amount, selected_day, now)
     start_epoch, end_epoch = int(start.timestamp()), int(end.timestamp())
@@ -402,11 +415,12 @@ def read_usage(path, view="hours", amount=2, selected_day=None, now=None):
                 continue
             role = row["role"]
             tokens = token_counts(row["usage"]) if role == "assistant" else None
+            model_time = model_time_ms(row["usage"]) if role == "assistant" else None
             events.append({"at": timestamp, "role": role,
                            "chat_id": str(row["chat_id"] or ""),
                            "user_id": str(row["user_id"] or chat_owners.get(str(row["chat_id"] or ""), "")),
                            "model_id": str(row["model_id"] or ""),
-                           "tokens": tokens})
+                           "tokens": tokens, "model_time_ms": model_time})
 
     events.sort(key=lambda event: event["at"], reverse=True)
 
@@ -480,7 +494,8 @@ def read_usage(path, view="hours", amount=2, selected_day=None, now=None):
             recent.append({"at": at, "role": role,
                            "user": names.get(event["user_id"], event["user_id"] or "Unknown"),
                            "model": models.get(event["model_id"], event["model_id"] or "—"),
-                           "tokens": event["tokens"]["total"] if event["tokens"] else None})
+                           "tokens": event["tokens"]["total"] if event["tokens"] else None,
+                           "model_time_ms": event["model_time_ms"]})
 
     model_rows = [{"model": models.get(model_id, model_id), **values}
                   for model_id, values in by_model.items()]
@@ -535,9 +550,9 @@ input[type=number]{width:95px}button{cursor:pointer}a:focus-visible,button:focus
 <div class="grid"><section class="panel"><h2>Token detail</h2><div class="cards" style="grid-template-columns:repeat(2,1fr)"><div><div class="label">Prompt tokens</div><div class="value" id="prompt-tokens">—</div></div><div><div class="label">Completion tokens</div><div class="value" id="completion-tokens">—</div></div></div><p class="muted" id="token-note"></p></section><section class="panel"><h2>Responses by model</h2><div class="table-wrap"><table><thead><tr><th>Model</th><th>Responses</th><th>With tokens</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody id="models"></tbody></table></div></section></div>
 <section class="panel"><h2>Responses by user</h2><p class="muted">The caller is the message owner recorded by Open WebUI, with the chat owner used when the message user ID is empty.</p><div class="table-wrap"><table><thead><tr><th>User</th><th>Responses</th><th>With tokens</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody id="users"></tbody></table></div></section>
 <section class="panel"><h2 id="period-title">Usage by time, user and model</h2><p class="muted">Each row combines saved assistant responses for one time period, caller and model. Token columns include recorded values only.</p><div class="controls"><input id="breakdown-search" type="search" placeholder="Filter by user or model" aria-label="Filter usage breakdown"><span class="muted" id="breakdown-count"></span></div><div class="table-wrap"><table><thead><tr><th>Period</th><th>User</th><th>Model</th><th>Responses</th><th>With tokens</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody id="breakdown"></tbody></table></div></section>
-<section class="panel"><h2>Recent saved responses</h2><p class="muted">Filters and sorting apply to the newest 100 assistant responses in the selected period. No prompt or answer text is loaded.</p>
-<div class="controls"><label>Search<input id="recent-search" type="search" placeholder="User or model"></label><label>User<select id="recent-user"><option value="">All users</option></select></label><label>Model<select id="recent-model"><option value="">All models</option></select></label><label>Token count<select id="recent-coverage"><option value="">Any</option><option value="recorded">Recorded</option><option value="missing">Not recorded</option></select></label><label>Minimum tokens<input id="recent-min" type="number" min="0" placeholder="Any"></label><label>Maximum tokens<input id="recent-max" type="number" min="0" placeholder="Any"></label><label>Sort by<select id="recent-sort"><option value="at">Time</option><option value="user">User</option><option value="model">Model</option><option value="tokens">Total tokens</option></select></label><label>Order<select id="recent-order"><option value="desc">Descending</option><option value="asc">Ascending</option></select></label><button id="recent-reset" type="button">Clear filters</button><span id="recent-count" class="muted" aria-live="polite"></span></div>
-<div class="table-wrap"><table><thead><tr><th>Time</th><th>User</th><th>Model</th><th>Recorded total tokens</th></tr></thead><tbody id="recent"></tbody></table></div></section>
+<section class="panel"><h2>Recent saved responses</h2><p class="muted">Filters and sorting apply to the newest 100 assistant responses in the selected period. Model time adds saved prompt and generation times; it excludes queueing and network time, so it is not full request latency. Missing values cannot be recovered from the saved response. No prompt or answer text is loaded.</p>
+<div class="controls"><label>Search<input id="recent-search" type="search" placeholder="User or model"></label><label>User<select id="recent-user"><option value="">All users</option></select></label><label>Model<select id="recent-model"><option value="">All models</option></select></label><label>Token count<select id="recent-coverage"><option value="">Any</option><option value="recorded">Recorded</option><option value="missing">Not recorded</option></select></label><label>Minimum tokens<input id="recent-min" type="number" min="0" placeholder="Any"></label><label>Maximum tokens<input id="recent-max" type="number" min="0" placeholder="Any"></label><label>Sort by<select id="recent-sort"><option value="at">Time</option><option value="user">User</option><option value="model">Model</option><option value="tokens">Total tokens</option><option value="model_time_ms">Model time</option></select></label><label>Order<select id="recent-order"><option value="desc">Descending</option><option value="asc">Ascending</option></select></label><button id="recent-reset" type="button">Clear filters</button><span id="recent-count" class="muted" aria-live="polite"></span></div>
+<div class="table-wrap"><table><thead><tr><th>Time</th><th>User</th><th>Model</th><th>Recorded total tokens</th><th>Model time (ms)</th></tr></thead><tbody id="recent"></tbody></table></div></section>
 </main><script>
 const key=new URLSearchParams(location.search).get('key')||'';
 const $=id=>document.getElementById(id),fmt=n=>Number(n).toLocaleString(),stamp=n=>new Date(n*1000).toLocaleString();
@@ -569,8 +584,8 @@ function renderRecent(){
   const field=$('recent-sort').value,direction=$('recent-order').value==='asc'?1:-1;
   const matching=lastUsage.recent.filter(x=>(!query||[x.user,x.model,stamp(x.at)].join(' ').toLowerCase().includes(query))&&(!user||x.user===user)&&(!model||x.model===model)&&(!coverage||(coverage==='recorded'?x.tokens!==null:x.tokens===null))&&(min===null||x.tokens!==null&&x.tokens>=min)&&(max===null||x.tokens!==null&&x.tokens<=max));
   matching.sort((a,b)=>{const av=a[field],bv=b[field];if(av===null||bv===null)return av===null&&bv===null?b.at-a.at:av===null?1:-1;const comparison=typeof av==='number'?av-bv:String(av).localeCompare(String(bv),undefined,{numeric:true,sensitivity:'base'});return comparison*direction||b.at-a.at});
-  rows('recent',matching,[x=>stamp(x.at),x=>x.user,x=>x.model,x=>x.tokens===null?'Not recorded':fmt(x.tokens)],'No responses match these filters.');
-  $('recent-count').textContent='Showing '+fmt(matching.length)+' of '+fmt(lastUsage.recent.length)+' recent responses';
+  rows('recent',matching,[x=>stamp(x.at),x=>x.user,x=>x.model,x=>x.tokens===null?'Not recorded':fmt(x.tokens),x=>x.model_time_ms===null?'Not recorded':fmt(x.model_time_ms)],'No responses match these filters.');
+  $('recent-count').textContent='Showing '+fmt(matching.length)+' of '+fmt(lastUsage.recent.length)+' recent responses; '+fmt(matching.filter(x=>x.model_time_ms!==null).length)+' with model time';
 }
 async function load(){
   if(busy)return;busy=true;
