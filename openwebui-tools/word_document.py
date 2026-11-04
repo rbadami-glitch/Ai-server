@@ -139,6 +139,7 @@ class Tools:
         except ValueError as error:
             return f"I could not create the Word document: {error}."
 
+        stage = "imports"
         try:
             from fastapi import UploadFile
             from starlette.datastructures import Headers
@@ -147,24 +148,29 @@ class Tools:
             from open_webui.routers.files import upload_file_handler
             from open_webui.storage.provider import Storage
 
+            stage = "user lookup"
             user = await Users.get_user_by_id(__user__["id"])
             if user is None:
                 return "I could not create the Word document: user access could not be verified."
 
+            stage = "upload preparation"
             filename = _safe_filename(title)
             upload = UploadFile(
                 file=io.BytesIO(data),
                 filename=filename,
                 headers=Headers({"content-type": DOCX_MIME}),
             )
+            stage = "file upload"
             file_item = await upload_file_handler(
                 __request__, file=upload, process=False, user=user
             )
+            stage = "stored file lookup"
             file_id = file_item.id
             stored = await Files.get_file_by_id(file_id)
             if stored is None or stored.user_id != user.id:
                 return "I could not verify the stored Word document. No download is available."
 
+            stage = "stored file verification"
             stored_path = await asyncio.to_thread(Storage.get_file, stored.path)
             stored_data = await asyncio.to_thread(Path(stored_path).read_bytes)
             validate_docx(stored_data)
@@ -188,6 +194,9 @@ class Tools:
                     # The verified, authenticated link still works if the file card fails.
                     pass
             return f"Word document created: [Download {filename}]({url})"
-        except Exception:
+        except Exception as error:
             # Never claim success when uploading or checking the file fails.
-            return "I could not create and verify the Word document. No download is available."
+            return (
+                "I could not create and verify the Word document. "
+                f"No download is available. Diagnostic: {stage} / {type(error).__name__}."
+            )
