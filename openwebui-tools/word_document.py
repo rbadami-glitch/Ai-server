@@ -162,7 +162,7 @@ class Tools:
             )
             stage = "file upload"
             file_item = await upload_file_handler(
-                __request__, file=upload, process=False, user=user
+                __request__, file=upload, metadata={}, process=False, user=user
             )
             stage = "stored file lookup"
             file_id = file_item.id
