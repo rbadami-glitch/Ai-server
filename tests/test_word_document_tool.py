@@ -30,6 +30,37 @@ class WordDocumentToolTests(unittest.TestCase):
         self.assertIn("First <point>.", text)
         self.assertIn("Second point.", text)
 
+    def test_headings_and_lists_have_word_styles_and_numbering(self):
+        content = (
+            "## Introduction\nA useful **bold** point.\n\n"
+            "- First benefit\n- Second benefit\n"
+            "1. First action\n2. Second action"
+        )
+        data = MODULE.make_docx("Teamwork", content)
+        ns = {"w": MODULE._WORD_NS}
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            styles = ET.fromstring(archive.read("word/styles.xml"))
+            numbering = ET.fromstring(archive.read("word/numbering.xml"))
+            document = ET.fromstring(archive.read("word/document.xml"))
+        style_ids = {
+            node.attrib[f"{{{MODULE._WORD_NS}}}styleId"]
+            for node in styles.findall("w:style", ns)
+        }
+        self.assertTrue({"Title", "Heading2", "ListBullet", "ListNumber"} <= style_ids)
+        self.assertEqual(2, len(numbering.findall("w:num", ns)))
+        paragraphs = document.findall(".//w:body/w:p", ns)
+        applied = [
+            node.attrib[f"{{{MODULE._WORD_NS}}}val"]
+            for paragraph in paragraphs
+            for node in paragraph.findall("w:pPr/w:pStyle", ns)
+        ]
+        self.assertEqual(
+            ["Title", "Heading2", "Normal", "ListBullet", "ListBullet", "ListNumber", "ListNumber"],
+            applied,
+        )
+        self.assertEqual(4, len(document.findall(".//w:numPr", ns)))
+        self.assertTrue(document.findall(".//w:rPr/w:b", ns))
+
     def test_no_false_success_without_user_context(self):
         result = asyncio.run(
             MODULE.Tools().create_word_document("Test", "Content")

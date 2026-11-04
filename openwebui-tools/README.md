@@ -1,8 +1,10 @@
 # Word document tool
 
-`word_document.py` is a narrow Open WebUI Workspace tool for creating a basic `.docx` from a title and document text. It uses only Python's standard library for document creation. It does not run shell commands or install packages.
+`word_document.py` is a narrow Open WebUI Workspace tool for creating a `.docx` from a title and document text. It uses only Python's standard library for document creation. It does not run shell commands or install packages.
 
-The tool was reviewed against Open WebUI 0.12.5 source and passed local package checks. A live Open WebUI test, browser download test, and Microsoft Word opening test are still required. Its presence in this Git checkout does not install or enable it in Open WebUI.
+The document uses Word paragraph styles for its title, headings, and body text. The tool recognizes Markdown-style `#`/`##` headings, `-` bullets, `1.` numbered items, and `**bold**` spans. It does not support company templates, images, tables, or arbitrary Markdown layout.
+
+The upload path was tested with Open WebUI 0.12.5 in a private chat, and the browser downloaded a `.docx`. The improved formatting has only local package checks so far. Microsoft Word opening and visual review are still required. Its presence in this Git checkout does not install or enable it in Open WebUI.
 
 ## Local check
 
