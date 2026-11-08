@@ -14,13 +14,15 @@ if (-not (Test-Path -LiteralPath $certificate)) { throw 'The review public certi
 $temporary = Join-Path $env:TEMP ('openwebui-chat-' + [guid]::NewGuid().ToString('N') + '.json')
 $encrypted = Join-Path $PSScriptRoot ('chat-review-' + [guid]::NewGuid().ToString('N') + '.p7m')
 try {
-    & python -B $scriptPath --db $Database --chat $chatLink --output $temporary
+    $exportSummary = & python -B $scriptPath --db $Database --chat $chatLink --output $temporary
     if ($LASTEXITCODE -ne 0) { throw 'Chat export failed.' }
     $plaintext = Get-Content -LiteralPath $temporary -Raw -Encoding UTF8
     $cms = Protect-CmsMessage -To $certificate -Content $plaintext
     [System.IO.File]::WriteAllText($encrypted, $cms, [System.Text.Encoding]::ASCII)
+    Write-Host $exportSummary
     Write-Host ('Encrypted chat file: ' + $encrypted)
     Write-Host 'The plaintext temporary export is being removed.'
+    Write-Output $encrypted
 } finally {
     Remove-Item -LiteralPath $temporary -ErrorAction SilentlyContinue
     $plaintext = $null
