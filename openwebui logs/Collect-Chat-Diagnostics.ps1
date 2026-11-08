@@ -8,6 +8,13 @@ $ErrorActionPreference = 'Stop'
 # Match both clock formats because the log timezone has not been established.
 $incidentPattern = '2026-11-05[ T](?:17:(?:[45][0-9])|18:0[0-9]|23:(?:1[5-9]|2[0-9]|3[0-5]))'
 $certificate = Join-Path $PSScriptRoot 'review-public.cer'
+
+function Open-SharedLogReader([string]$Path) {
+    $share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $share)
+    return [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $true)
+}
+
 if (-not (Test-Path -LiteralPath $LogDirectory -PathType Container)) {
     throw "Open WebUI log directory was not found: $LogDirectory"
 }
@@ -32,24 +39,39 @@ $report = New-Object System.Text.StringBuilder
 
 foreach ($file in $files) {
     [void]$report.AppendLine(('FILE {0} | bytes={1} | modified UTC={2:o}' -f $file.Name, $file.Length, $file.LastWriteTimeUtc))
-    $hits = @(Select-String -LiteralPath $file.FullName -Pattern $incidentPattern)
+    $hits = New-Object 'System.Collections.Generic.List[int]'
+    $reader = Open-SharedLogReader $file.FullName
+    try {
+        $number = 0
+        while (($line = $reader.ReadLine()) -ne $null) {
+            $number++
+            if ($line -match $incidentPattern) { $hits.Add($number) }
+        }
+    } finally {
+        $reader.Dispose()
+    }
     [void]$report.AppendLine('Incident timestamp matches: ' + $hits.Count)
     if ($hits.Count -gt 0) {
         $wanted = New-Object 'System.Collections.Generic.HashSet[int]'
         foreach ($hit in $hits) {
-            for ($number = [Math]::Max(1, $hit.LineNumber - 5); $number -le $hit.LineNumber + 60; $number++) {
+            for ($number = [Math]::Max(1, $hit - 5); $number -le $hit + 60; $number++) {
                 [void]$wanted.Add($number)
             }
         }
         $number = 0
-        foreach ($line in [System.IO.File]::ReadLines($file.FullName)) {
-            $number++
-            if ($wanted.Contains($number)) {
-                [void]$report.AppendLine(('{0}: {1}' -f $number, $line))
-                if ($report.Length -gt 4MB) {
-                    throw 'Incident excerpts exceed 4 MiB. No encrypted file was written; narrow the time window.'
+        $reader = Open-SharedLogReader $file.FullName
+        try {
+            while (($line = $reader.ReadLine()) -ne $null) {
+                $number++
+                if ($wanted.Contains($number)) {
+                    [void]$report.AppendLine(('{0}: {1}' -f $number, $line))
+                    if ($report.Length -gt 4MB) {
+                        throw 'Incident excerpts exceed 4 MiB. No encrypted file was written; narrow the time window.'
+                    }
                 }
             }
+        } finally {
+            $reader.Dispose()
         }
     }
     [void]$report.AppendLine()
