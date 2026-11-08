@@ -1,5 +1,20 @@
 # Review one Open WebUI chat
 
+## Windows export UI
+
+On the Open WebUI server, double-click `Open-Chat-Export-UI.cmd` in this folder.
+Paste one complete `/c/` or `/s/` chat link and click **Encrypt and push this chat**.
+The UI checks that the Git checkout is clean and points to the expected GitHub
+repository, fast-forwards `main`, exports only the selected chat through the
+same script as the terminal workflow, encrypts it, stages only the new `.p7m`
+file, commits, and pushes. It shows the new commit ID for the reviewer.
+
+The export includes saved chat messages and metadata, but not attachment file
+contents. The GitHub repository is public and keeps encrypted files in commit
+history even after a normal delete. The UI never commits plaintext or the
+decryption key. If a step fails after encryption, the status names the local
+encrypted file; it does not retry or commit other files automatically.
+
 For LLM review, order reconstruction, evidence rules, and the required
 end-of-review deletion question, read [AGENTS.md](AGENTS.md).
 
@@ -14,13 +29,12 @@ chat JSON, chat screenshots, database files, or a private decryption key here.
 `review-public.cer` contains only the public encryption certificate. The
 matching private key remains in the reviewer's local Windows certificate store.
 
-On the Open WebUI server, clone the reviewed source into a checkout **inside**
-`E:\AI\ollama\OpenWebUI-Monitoring\chat logs`. The temporary plaintext file and
-encrypted result then both stay inside that parent folder. The temporary file
-is removed after encryption.
+The established server checkout is `E:\AI\ollama\OpenWebUI-Monitoring\github`.
+The exporter creates a temporary plaintext file beside the script, encrypts it,
+and removes the plaintext file immediately afterward.
 
 ```powershell
-& 'E:\AI\ollama\OpenWebUI-Monitoring\chat logs\Ai-server\openwebui logs\Export-One-Chat.ps1'
+& 'E:\AI\ollama\OpenWebUI-Monitoring\github\openwebui logs\Export-One-Chat.ps1'
 ```
 
 Paste the exact `/c/` or `/s/` chat link when asked. The script prints the path

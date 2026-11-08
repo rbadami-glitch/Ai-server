@@ -1,9 +1,12 @@
 param(
-    [string]$Database = 'C:\downloads\open-webui\data\webui.db'
+    [string]$Database = 'C:\downloads\open-webui\data\webui.db',
+    [string]$ChatLink
 )
 
 $ErrorActionPreference = 'Stop'
-$chatLink = Read-Host 'Paste the exact Open WebUI chat link or chat ID'
+if ([string]::IsNullOrWhiteSpace($ChatLink)) {
+    $ChatLink = Read-Host 'Paste the exact Open WebUI chat link or chat ID'
+}
 if ([string]::IsNullOrWhiteSpace($chatLink)) { throw 'A chat link or ID is required.' }
 
 $scriptPath = Join-Path $PSScriptRoot 'export_one_chat.py'
