@@ -39,6 +39,24 @@ $report = New-Object System.Text.StringBuilder
 
 foreach ($file in $files) {
     [void]$report.AppendLine(('FILE {0} | bytes={1} | modified UTC={2:o}' -f $file.Name, $file.Length, $file.LastWriteTimeUtc))
+    if ($file.Name -ieq 'stderr.log') {
+        [void]$report.AppendLine('Full current stderr.log follows because its lines have no matching incident timestamps.')
+        $reader = Open-SharedLogReader $file.FullName
+        try {
+            $number = 0
+            while (($line = $reader.ReadLine()) -ne $null) {
+                $number++
+                [void]$report.AppendLine(('{0}: {1}' -f $number, $line))
+                if ($report.Length -gt 4MB) {
+                    throw 'Log excerpts exceed 4 MiB. No encrypted file was written.'
+                }
+            }
+        } finally {
+            $reader.Dispose()
+        }
+        [void]$report.AppendLine()
+        continue
+    }
     $hits = New-Object 'System.Collections.Generic.List[int]'
     $reader = Open-SharedLogReader $file.FullName
     try {
