@@ -11,10 +11,13 @@ chat JSON, chat screenshots, database files, or a private decryption key here.
 `review-public.cer` contains only the public encryption certificate. The
 matching private key remains in the reviewer's local Windows certificate store.
 
-On the Open WebUI server, after a clean fast-forward pull of the reviewed code:
+On the Open WebUI server, clone the reviewed source into a checkout **inside**
+`E:\AI\ollama\OpenWebUI-Monitoring\chat logs`. The temporary plaintext file and
+encrypted result then both stay inside that parent folder. The temporary file
+is removed after encryption.
 
 ```powershell
-& 'E:\AI\ollama\OpenWebUI-Monitoring\github\openwebui logs\Export-One-Chat.ps1'
+& 'E:\AI\ollama\OpenWebUI-Monitoring\chat logs\Ai-server\openwebui logs\Export-One-Chat.ps1'
 ```
 
 Paste the exact `/c/` or `/s/` chat link when asked. The script prints the path

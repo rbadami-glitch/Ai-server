@@ -11,7 +11,7 @@ $certificate = Join-Path $PSScriptRoot 'review-public.cer'
 if (-not (Test-Path -LiteralPath $scriptPath)) { throw 'The chat exporter is missing.' }
 if (-not (Test-Path -LiteralPath $certificate)) { throw 'The review public certificate is missing.' }
 
-$temporary = Join-Path $env:TEMP ('openwebui-chat-' + [guid]::NewGuid().ToString('N') + '.json')
+$temporary = Join-Path $PSScriptRoot ('openwebui-chat-' + [guid]::NewGuid().ToString('N') + '.json')
 $encrypted = Join-Path $PSScriptRoot ('chat-review-' + [guid]::NewGuid().ToString('N') + '.p7m')
 try {
     $exportSummary = & python -B $scriptPath --db $Database --chat $chatLink --output $temporary
