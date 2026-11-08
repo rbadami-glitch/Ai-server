@@ -38,7 +38,11 @@ than one chat could be meant, ask which one. Do not scan other users' chats.
    what the reply actually supplied, whether the user's task was answered,
    whether factual correctness is verified, the evidence, and the specific
    fix or follow-up test. Include the final turns and repeated attempts.
-   Then summarize patterns and prioritized improvements.
+   Immediately after the table, add **Causes and fixes** pointers covering
+   every turn number. For each pointer, separate a confirmed cause from a
+   plausible cause, say what evidence would decide, and give a specific fix.
+   Group turns only when their cause and fix truly match. Then summarize
+   patterns and prioritized improvements.
 5. Compare `chat_message` rows with the chat JSON snapshot for apparent
    missing or partial replies. Distinguish **saved in the database** from
    **visible in the browser**. A `done` flag does not prove the user saw a
@@ -66,6 +70,11 @@ than one chat could be meant, ask which one. Do not scan other users' chats.
   result, display problem, etc.), the smallest credible fix, and a test that
   would prove the fix worked. Do not propose model training for live-changing
   data that requires a current, authorized system query.
+- In the **Causes and fixes** section, never promote a symptom into a root
+  cause. A Wren `GENERATING` timeout proves the job did not finish by its
+  deadline; it does not prove whether model generation, SQL, queueing, or the
+  database was slow. Missing output columns prove only what the user received;
+  inspect generated SQL and raw rows before blaming query generation.
 - Summarize repeated failures as an issue list with priority and acceptance
   criteria. Retest those same cases, including short supplier names, no-match
   cases, long-running queries, and model-switching UX, after a change.
