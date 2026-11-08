@@ -1,5 +1,8 @@
 # Review one Open WebUI chat
 
+For LLM review, order reconstruction, evidence rules, and the required
+end-of-review deletion question, read [AGENTS.md](AGENTS.md).
+
 `Export-One-Chat.ps1` asks for one chat link or ID, reads only that chat from the
 Open WebUI SQLite database, and saves an encrypted `.p7m` file in this folder.
 It does not copy the database or other chats. The temporary plaintext JSON is
@@ -22,4 +25,6 @@ is removed after encryption.
 
 Paste the exact `/c/` or `/s/` chat link when asked. The script prints the path
 to the encrypted file. Inspect `git status` and stage **only that `.p7m` file**
-before committing and pushing. The reviewer can pull it and decrypt locally.
+before committing and pushing **only if encrypted transfer through this public
+repository is intended**. Git history can retain an encrypted export after
+normal deletion. Prefer an approved private transfer route for future chats.

@@ -1,6 +1,6 @@
 # Open WebUI monitoring source
 
-This folder is for **source code only**. Its local Git `origin` is the approved private repository `https://github.com/rbadami-glitch/Ai-server.git`. Do not add these tools to `Cw-llama-index` or commit the whole `GPU-RCA-Checks` folder. A configured remote alone does not mean any commit has been pushed or deployed.
+This folder is for **source code only**. Its local Git `origin` is the **public** repository `https://github.com/rbadami-glitch/Ai-server.git`. Do not add these tools to `Cw-llama-index` or commit the whole `GPU-RCA-Checks` folder. A configured remote alone does not mean any commit has been pushed or deployed.
 
 | Source file | Purpose |
 | --- | --- |
