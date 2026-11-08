@@ -34,9 +34,11 @@ than one chat could be meant, ask which one. Do not scan other users' chats.
 3. Pair every user message with its actual assistant child. Record the
    per-message `model_id`; one chat can switch models. Do not infer who changed
    the model selector without evidence.
-4. **Present a turn-by-turn table first**: user request, assistant/model, saved
-   reply or lack of reply, and any specific issue. Include the final turns and
-   repeated attempts. Then summarize patterns and prioritized improvements.
+4. **Present a turn-by-turn evaluation first**: user request, assistant/model,
+   what the reply actually supplied, whether the user's task was answered,
+   whether factual correctness is verified, the evidence, and the specific
+   fix or follow-up test. Include the final turns and repeated attempts.
+   Then summarize patterns and prioritized improvements.
 5. Compare `chat_message` rows with the chat JSON snapshot for apparent
    missing or partial replies. Distinguish **saved in the database** from
    **visible in the browser**. A `done` flag does not prove the user saw a
@@ -44,6 +46,32 @@ than one chat could be meant, ask which one. Do not scan other users' chats.
 6. Check file/source counts, tool outputs, usage and timestamps before saying
    a tool, RAG, or data source was used. Saved timestamps are approximate
    evidence of wait time, not necessarily full user-visible latency.
+
+## Grade every answer against the user's need
+
+- Give two separate verdicts for each turn:
+  1. **Task result:** `Answered`, `Partly answered`, or `Not answered`.
+     A truthful statement that the model lacks ERP access is still `Not
+     answered` when the user asked for an invoice status.
+  2. **Factual accuracy:** `Verified correct`, `Verified wrong`, or
+     `Unverified`. Verify against an authoritative, current source for that
+     exact invoice, supplier, entity, date, and user's access rights. A
+     plausible table is not proof. Never label an answer correct solely
+     because it is fluent, structured, or marked `done`.
+- Identify unsupported claims separately. For example, saying an invoice was
+  absent from an attached knowledge base is wrong if the model had no attached
+  knowledge base, even when its lack of ERP access is true.
+- For each `Partly answered` or `Not answered` turn, state the precise failure
+  type (no data access, timeout, ambiguous match, missing fields, empty
+  result, display problem, etc.), the smallest credible fix, and a test that
+  would prove the fix worked. Do not propose model training for live-changing
+  data that requires a current, authorized system query.
+- Summarize repeated failures as an issue list with priority and acceptance
+  criteria. Retest those same cases, including short supplier names, no-match
+  cases, long-running queries, and model-switching UX, after a change.
+- If ground truth is unavailable, explicitly request the minimum redacted ERP
+  or source evidence needed to verify accuracy. Continue the task-resolution
+  review without waiting for that evidence; do not invent a correctness score.
 
 ## Make claims carefully
 
@@ -65,9 +93,11 @@ than one chat could be meant, ask which one. Do not scan other users' chats.
 
 ## Required ending and deletion
 
-Finish **every** chat review by asking the user whether to delete that chat's
-retained export. Do not delete it merely because the review is complete, and
-do not treat silence as approval. The question must name the exact export and
+Finish **every completed** chat review, including answer-level grading and
+requested corrections, by asking the user whether to delete that chat's
+retained export. Do not ask after a preliminary summary while the review is
+still being corrected. Do not delete it merely because the review is complete,
+and do not treat silence as approval. The question must name the exact export and
 the places where it is retained. If the user says to delete, remove the local
 and server working copies that are accessible, and verify their absence.
 Normal `git rm` plus a new commit does **not** erase the export from public
