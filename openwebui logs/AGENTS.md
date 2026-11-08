@@ -33,11 +33,17 @@ than one chat could be meant, ask which one. Do not scan other users' chats.
    Do not trust `ORDER BY created_at, id` as the conversation order.
 3. Pair every user message with its actual assistant child. Record the
    per-message `model_id`; one chat can switch models. Do not infer who changed
-   the model selector without evidence.
+   the model selector without evidence. Establish the **intended model for the
+   task** before assigning blame. In this deployment, Wren AI is the intended
+   assistant for live finance/ERP questions; Curtiss-Wright and the coding
+   assistant are not expected to answer those questions. If they receive such
+   a question, classify it as wrong-model selection and assess their handoff
+   behavior separately from Wren's answer quality.
 4. **Present a turn-by-turn evaluation first**: user request, assistant/model,
-   what the reply actually supplied, whether the user's task was answered,
-   whether factual correctness is verified, the evidence, and the specific
-   fix or follow-up test. Include the final turns and repeated attempts.
+   intended versus wrong model, what the reply supplied, whether the user's
+   task was answered, whether factual correctness is verified, the evidence,
+   and the specific fix or follow-up test. Include the final turns and
+   repeated attempts.
    Immediately after the table, add **Causes and fixes** pointers covering
    every turn number. For each pointer, separate a confirmed cause from a
    plausible cause, say what evidence would decide, and give a specific fix.
@@ -62,6 +68,12 @@ than one chat could be meant, ask which one. Do not scan other users' chats.
      exact invoice, supplier, entity, date, and user's access rights. A
      plausible table is not proof. Never label an answer correct solely
      because it is fluent, structured, or marked `done`.
+- Also record **routing:** `Intended model` or `Wrong model`. A truthful
+  no-access response from a wrong model can be appropriate model behavior
+  while the user's task remains unanswered. Do not count that response as a
+  Wren failure or recommend giving the wrong model ERP access. For wrong-model
+  turns, the product fix is a clear model label, a finance-task warning, or an
+  easy switch to Wren that preserves the user's question.
 - Identify unsupported claims separately. For example, saying an invoice was
   absent from an attached knowledge base is wrong if the model had no attached
   knowledge base, even when its lack of ERP access is true.
