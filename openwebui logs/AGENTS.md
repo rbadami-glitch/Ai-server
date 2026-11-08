@@ -68,6 +68,14 @@ than one chat could be meant, ask which one. Do not scan other users' chats.
      exact invoice, supplier, entity, date, and user's access rights. A
      plausible table is not proof. Never label an answer correct solely
      because it is fluent, structured, or marked `done`.
+- Grade against the user's **actual question in that turn**, using prior
+  context only where it clearly carries forward. If a user asks for "status"
+  and a `taskstatus` value is returned, classify it as `Answered` unless the
+  business definition or explicit wording shows that a different status was
+  required. Missing source, timestamp, or identifiers can make the answer
+  hard to verify without making it `Partly answered`. Reserve `Partly answered`
+  for an explicitly requested component that is missing or a demonstrably
+  truncated answer. Record verification and UX weaknesses separately.
 - Also record **routing:** `Intended model` or `Wrong model`. A truthful
   no-access response from a wrong model can be appropriate model behavior
   while the user's task remains unanswered. Do not count that response as a
@@ -105,7 +113,11 @@ than one chat could be meant, ask which one. Do not scan other users' chats.
   backend lookup occurred.
 - `Processed`, `Paid`, and `payment-closed` are different fields or states.
   Do not equate them without a validated business definition. `No rows
-  returned` does not prove an invoice does not exist.
+  returned` establishes only that Wren presented an empty result. It does not
+  prove an invoice does not exist or reveal whether supplier matching, query
+  generation, data coverage, permissions, or filtering caused the empty result.
+  Inspect the saved Wren task, generated SQL, raw rows, and an authorized ERP
+  lookup before naming a cause.
 - Do not claim a Wren result is correct without the generated query, source
   rows, authorization context, and data freshness. Do not generalize one chat
   to all users or attribute Wren/coding-assistant behavior to Curtiss-Wright.
