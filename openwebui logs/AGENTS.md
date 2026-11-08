@@ -41,8 +41,8 @@ than one chat could be meant, ask which one. Do not scan other users' chats.
    behavior separately from Wren's answer quality.
 4. **Present a turn-by-turn evaluation first**: user request, assistant/model,
    intended versus wrong model, what the reply supplied, whether the user's
-   task was answered, whether factual correctness is verified, the evidence,
-   and the specific fix or follow-up test. Include the final turns and
+   task was answered, the saved Open WebUI evidence, and the specific fix or
+   follow-up test within the user's ownership. Include the final turns and
    repeated attempts.
    Immediately after the table, add **Causes and fixes** pointers covering
    every turn number. For each pointer, separate a confirmed cause from a
@@ -59,15 +59,14 @@ than one chat could be meant, ask which one. Do not scan other users' chats.
 
 ## Grade every answer against the user's need
 
-- Give two separate verdicts for each turn:
-  1. **Task result:** `Answered`, `Partly answered`, or `Not answered`.
-     A truthful statement that the model lacks ERP access is still `Not
-     answered` when the user asked for an invoice status.
-  2. **Factual accuracy:** `Verified correct`, `Verified wrong`, or
-     `Unverified`. Verify against an authoritative, current source for that
-     exact invoice, supplier, entity, date, and user's access rights. A
-     plausible table is not proof. Never label an answer correct solely
-     because it is fluent, structured, or marked `done`.
+- Give a **task-result** verdict for each turn: `Answered`, `Partly answered`,
+  or `Not answered`. A truthful statement that the model lacks ERP access is
+  still `Not answered` when the user asked for an invoice status. Assess
+  whether Open WebUI routed, saved, and displayed the response properly.
+- Factual verification of invoice values is outside this review unless the
+  user specifically requests it. Mark data values `not assessed` rather than
+  investigating ERP truth, assigning a correctness score, or asking for ERP
+  records. A plausible table or `done` flag never proves factual correctness.
 - Grade against the user's **actual question in that turn**, using prior
   context only where it clearly carries forward. If a user asks for "status"
   and a `taskstatus` value is returned, classify it as `Answered` unless the
@@ -96,11 +95,12 @@ than one chat could be meant, ask which one. Do not scan other users' chats.
   database was slow. Missing output columns prove only what the user received;
   inspect generated SQL and raw rows before blaming query generation.
 - Summarize repeated failures as an issue list with priority and acceptance
-  criteria. Retest those same cases, including short supplier names, no-match
-  cases, long-running queries, and model-switching UX, after a change.
-- If ground truth is unavailable, explicitly request the minimum redacted ERP
-  or source evidence needed to verify accuracy. Continue the task-resolution
-  review without waiting for that evidence; do not invent a correctness score.
+  criteria. Focus on Open WebUI-owned model selection, pipe formatting,
+  response/error handling, logging, and browser display. For Wren-owned query
+  or data issues, collect the task ID and evidence for the owning team; do not
+  propose changing their service as this user's fix.
+- If the user says an issue is already fixed, label it historical and stop
+  recommending a fix for it unless current evidence shows a regression.
 
 ## Make claims carefully
 
@@ -116,11 +116,12 @@ than one chat could be meant, ask which one. Do not scan other users' chats.
   returned` establishes only that Wren presented an empty result. It does not
   prove an invoice does not exist or reveal whether supplier matching, query
   generation, data coverage, permissions, or filtering caused the empty result.
-  Inspect the saved Wren task, generated SQL, raw rows, and an authorized ERP
-  lookup before naming a cause.
-- Do not claim a Wren result is correct without the generated query, source
-  rows, authorization context, and data freshness. Do not generalize one chat
-  to all users or attribute Wren/coding-assistant behavior to Curtiss-Wright.
+  Inspect the Open WebUI pipe output and the saved Wren task trace before
+  naming a cause. If Wren supplied an empty result, pass its task ID to the
+  Wren owner rather than attempting to fix their query in Open WebUI.
+- Do not claim a Wren result is factually correct without evidence, and do not
+  fact-check Wren's invoice data unless asked. Do not generalize one chat to
+  all users or attribute Wren/coding-assistant behavior to Curtiss-Wright.
 - If the browser appears blank but the export has a saved reply, state both
   facts and request UI evidence before diagnosing the display failure.
 
