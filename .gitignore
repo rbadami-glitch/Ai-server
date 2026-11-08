@@ -7,6 +7,8 @@ Model-Test-*.jsonl
 *.db
 *.db-*
 *.log
+openwebui logs/*.json
+openwebui logs/*.txt
 *.key
 *.pem
 *.pfx
