@@ -65,11 +65,14 @@ $button.Add_Click({
         $form.Refresh()
         [System.Windows.Forms.Application]::DoEvents()
 
-        $origin = (& git -C $repo remote get-url origin | Select-Object -First 1)
-        if ($LASTEXITCODE -ne 0 -or $origin -notmatch '(?i)(?:[:/])rbadami-glitch/Ai-server(?:\.git)?$') {
+        $origin = & git -C $repo remote get-url origin
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not read the Git origin from $repo."
+        }
+        if ($origin -notmatch '(?i)(?:[:/])rbadami-glitch/Ai-server(?:\.git)?$') {
             throw 'This checkout does not point to the expected GitHub repository.'
         }
-        $branch = (& git -C $repo branch --show-current | Select-Object -First 1)
+        $branch = & git -C $repo branch --show-current
         if ($LASTEXITCODE -ne 0 -or $branch -ne 'main') {
             throw 'The checkout must be on the main branch.'
         }
@@ -106,7 +109,7 @@ $button.Add_Click({
         & git -C $repo push origin main | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'Git push failed. The encrypted commit remains local.' }
 
-        $commit = (& git -C $repo rev-parse --short HEAD | Select-Object -First 1)
+        $commit = & git -C $repo rev-parse --short HEAD
         $status.Text = 'Done. Encrypted chat pushed at commit ' + $commit + '. Tell the reviewer this commit ID.'
     } catch {
         $status.Text = 'Stopped: ' + $_.Exception.Message
