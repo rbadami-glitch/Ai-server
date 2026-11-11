@@ -8,7 +8,8 @@ param(
     [switch]$CollectOnly,
     [switch]$MetadataOnly,
     [switch]$RunProbe,
-    [switch]$SavedReplies
+    [switch]$SavedReplies,
+    [switch]$HistoricalDetails
 )
 
 $ErrorActionPreference = 'Stop'
@@ -207,6 +208,14 @@ if ($SavedReplies) {
         --db $Db --model $Model --output (Join-Path $raw 'saved-replies.json')
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $raw 'saved-replies.json'))) {
         throw 'Saved reply audit did not finish. Temporary files were kept; no upload was attempted.'
+    }
+}
+if ($HistoricalDetails) {
+    & python -B (Join-Path $Repo 'diagnostics\openwebui_historical_reply_details.py') `
+        --db $Db --model $Model --output (Join-Path $raw 'historical-replies.json') `
+        --days $SinceDays
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $raw 'historical-replies.json'))) {
+        throw 'Historical reply audit did not finish. Temporary files were kept; no upload was attempted.'
     }
 }
 if ($RunProbe) {

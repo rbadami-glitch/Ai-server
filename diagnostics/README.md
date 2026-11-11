@@ -29,6 +29,8 @@ The existing GitHub repository is public. The local private key for this audit i
 
 `-SavedReplies -MetadataOnly` reads up to 5,000 recent chat records and aggregates assistant finish reasons and incomplete/error flags by day, account limit group, and chat limit group. It exports no chat text, identifiers, names, emails, or exact message times. Missing saved finish reasons are reported as missing metadata, not as proven interruptions. This path makes no inference request.
 
+`-HistoricalDetails -MetadataOnly -SinceDays 14` creates a separate read-only list of saved assistant reply timestamps, numeric completion usage, one-way correlation hashes, and incomplete/error flags. It excludes chat text, user details, raw IDs, and error text. This supports comparison against previously collected service logs. A close timestamp match is circumstantial when multiple chats overlap, and absent finish reasons remain absent.
+
 On the AI server, after pulling the source commit into the clean checkout, run this single command in **Administrator Windows PowerShell**:
 
 ```powershell
