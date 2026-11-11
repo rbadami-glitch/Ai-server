@@ -23,7 +23,7 @@ The script samples metadata-only overrides from up to 500 recent chats. It still
 
 ## Encrypted response investigation
 
-The existing GitHub repository is public. The local private key for this audit is kept outside Git; only `response-audit-public.xml` is committed. `Collect-OpenWebUI-ResponseAudit.ps1` creates a temporary server folder containing the settings audit, service inventory, recent Open WebUI/Ollama service logs, Ollama recorder files, a collection manifest, and recent Windows application crash events. It captures the last 7 days, prioritizes the most recently updated service logs, and captures at most 15 MiB per service log, 5 MiB per recorder file, and 70 MiB total. The manifest records any omitted or truncated material. No services or settings are changed.
+The existing GitHub repository is public. The local private key for this audit is kept outside Git; only `response-audit-public.xml` is committed. `Collect-OpenWebUI-ResponseAudit.ps1` creates a temporary server folder containing the settings audit, service inventory, service-to-log mapping, port 80 listener ownership, recent Open WebUI/Ollama service logs, Ollama recorder files, a collection manifest, and recent Windows application crash events. It captures the last 7 days, prioritizes the most recently updated service logs, and captures at most 15 MiB per service log, 5 MiB per recorder file, and 70 MiB total. The manifest records any omitted or truncated material. `-MetadataOnly` skips log and recorder copies for a small follow-up capture. No services or settings are changed.
 
 On the AI server, after pulling the source commit into the clean checkout, run this single command in **Administrator Windows PowerShell**:
 

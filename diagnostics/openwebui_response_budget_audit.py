@@ -84,7 +84,8 @@ def database_settings(path, model_id):
     uri = path.resolve().as_uri() + "?mode=ro"
     result = {"status": "read_only", "global_fields": [],
               "models": [], "account_field_counts": [],
-              "chat_override_field_counts": [], "chats_inspected": 0}
+              "chat_override_field_counts": [], "chats_inspected": 0,
+              "accounts_inspected": 0}
     with closing(sqlite3.connect(uri, uri=True, timeout=5)) as db:
         config_cols = table_columns(db, "config")
         if "data" in config_cols:
@@ -117,6 +118,7 @@ def database_settings(path, model_id):
         if "settings" in user_cols:
             counts = collections.Counter()
             for (raw,) in db.execute("SELECT settings FROM user"):
+                result["accounts_inspected"] += 1
                 fields = selected_fields(json_value(raw))
                 for name, value in fields.items():
                     counts[(name, json.dumps(value, sort_keys=True))] += 1
@@ -255,7 +257,7 @@ def main():
         "ollama": [],
         "recorder": {},
         "limits": [
-            "Per-chat and caller-supplied parameters are not visible in this audit.",
+            "Saved chat overrides are sampled; caller-supplied request parameters are not visible.",
             "A saved limit does not prove it was applied to a particular request.",
             "No inference request was made; finish reasons and stalls remain unmeasured.",
         ],

@@ -5,7 +5,8 @@ param(
     [string]$TempRoot = 'E:\AI\ollama\OpenWebUI-Monitoring\Temp-Response-Budget-Audit-20261111',
     [string]$Branch = 'response-audit-20261111',
     [int]$SinceDays = 7,
-    [switch]$CollectOnly
+    [switch]$CollectOnly,
+    [switch]$MetadataOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -94,12 +95,34 @@ try {
 $services | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $raw 'services.json') -Encoding UTF8
 
 $candidateLogs = New-Object 'System.Collections.Generic.List[string]'
+$serviceMap = @()
 foreach ($service in $services) {
     $name = $service.Name
     $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$name\Parameters"
+    $entry = [ordered]@{
+        name = $name
+        state = $service.State
+        service_pid = $service.ProcessId
+        application = $null
+        stdout = $null
+        stderr = $null
+        configured_port = $null
+        timeout_settings = @{}
+    }
     if (Test-Path -LiteralPath $regPath) {
         try {
             $settings = Get-ItemProperty -LiteralPath $regPath -ErrorAction Stop
+            $entry.application = $settings.Application
+            $entry.stdout = $settings.AppStdout
+            $entry.stderr = $settings.AppStderr
+            if ([string]$settings.AppParameters -match '(?:--port\s+|PORT=)(\d+)') {
+                $entry.configured_port = [int]$Matches[1]
+            }
+            foreach ($line in @($settings.AppEnvironmentExtra) -split "`0|`n") {
+                if ($line -match '^(AIOHTTP_CLIENT_TIMEOUT|AIOHTTP_CLIENT_STREAM_IDLE_TIMEOUT|PORT|WEBUI_PORT)=(\d*)$') {
+                    $entry.timeout_settings[$Matches[1]] = $Matches[2]
+                }
+            }
             foreach ($field in @('AppStdout', 'AppStderr')) {
                 $value = $settings.$field
                 if ($value -and [System.IO.Path]::IsPathRooted([string]$value)) { $candidateLogs.Add([string]$value) }
@@ -108,33 +131,61 @@ foreach ($service in $services) {
             $manifest.errors += "Could not inspect log paths for service $name`: $($_.Exception.Message)"
         }
     }
+    $serviceMap += $entry
 }
+$port80 = @()
+try {
+    $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop | Select-Object ProcessId, ParentProcessId, Name)
+    $byPid = @{}
+    foreach ($process in $processes) { $byPid[[int]$process.ProcessId] = $process }
+    foreach ($listener in @(Get-NetTCPConnection -LocalPort 80 -State Listen -ErrorAction Stop)) {
+        $pidValue = [int]$listener.OwningProcess
+        $chain = @()
+        for ($depth = 0; $depth -lt 20 -and $byPid.ContainsKey($pidValue); $depth++) {
+            $process = $byPid[$pidValue]
+            $chain += [ordered]@{ pid = $pidValue; name = $process.Name }
+            $pidValue = [int]$process.ParentProcessId
+        }
+        $chainPids = @($chain | ForEach-Object { $_.pid })
+        $owners = @($services | Where-Object { $chainPids -contains [int]$_.ProcessId } | Select-Object -ExpandProperty Name)
+        $port80 += [ordered]@{
+            local_address = $listener.LocalAddress
+            process_chain = $chain
+            matching_services = $owners
+        }
+    }
+} catch {
+    $manifest.errors += "Could not map port 80 owner: $($_.Exception.Message)"
+}
+([ordered]@{ services = $serviceMap; port_80_listeners = $port80 }) |
+    ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $raw 'service-map.json') -Encoding UTF8
 foreach ($path in @(
     'C:\ProgramData\OpenWebUI\logs\stdout.log',
     'C:\ProgramData\OpenWebUI\logs\stderr.log',
     'E:\AI\ollama\logs\ollama-service.log',
     'E:\AI\ollama\logs\ollama-service-error.log'
 )) { $candidateLogs.Add($path) }
-$logIndex = 0
-$recentLogs = @($candidateLogs | Select-Object -Unique | ForEach-Object {
-    if (Test-Path -LiteralPath $_ -PathType Leaf) { Get-Item -LiteralPath $_ }
-} | Where-Object { $_.LastWriteTime -ge $cutoff } | Sort-Object LastWriteTime -Descending)
-foreach ($item in $recentLogs) {
-    $logIndex++
-    Copy-LogTail $item.FullName ('service-log-{0:D2}.txt' -f $logIndex) 15MB
-}
-
 $recorderDir = 'E:\AI\ollama\OpenWebUI-Monitoring\Direct-Usage'
-if (Test-Path -LiteralPath $recorderDir -PathType Container) {
-    $recorderIndex = 0
-    try {
-        foreach ($file in (Get-ChildItem -LiteralPath $recorderDir -File -Filter 'ollama-*.jsonl' -ErrorAction Stop |
-            Where-Object { $_.LastWriteTime -ge $cutoff } | Sort-Object LastWriteTime -Descending)) {
-            $recorderIndex++
-            Copy-LogTail $file.FullName ('recorder-{0:D2}.jsonl' -f $recorderIndex) 5MB
+if (-not $MetadataOnly) {
+    $logIndex = 0
+    $recentLogs = @($candidateLogs | Select-Object -Unique | ForEach-Object {
+        if (Test-Path -LiteralPath $_ -PathType Leaf) { Get-Item -LiteralPath $_ }
+    } | Where-Object { $_.LastWriteTime -ge $cutoff } | Sort-Object LastWriteTime -Descending)
+    foreach ($item in $recentLogs) {
+        $logIndex++
+        Copy-LogTail $item.FullName ('service-log-{0:D2}.txt' -f $logIndex) 15MB
+    }
+    if (Test-Path -LiteralPath $recorderDir -PathType Container) {
+        $recorderIndex = 0
+        try {
+            foreach ($file in (Get-ChildItem -LiteralPath $recorderDir -File -Filter 'ollama-*.jsonl' -ErrorAction Stop |
+                Where-Object { $_.LastWriteTime -ge $cutoff } | Sort-Object LastWriteTime -Descending)) {
+                $recorderIndex++
+                Copy-LogTail $file.FullName ('recorder-{0:D2}.jsonl' -f $recorderIndex) 5MB
+            }
+        } catch {
+            $manifest.errors += "Could not enumerate recorder files: $($_.Exception.Message)"
         }
-    } catch {
-        $manifest.errors += "Could not enumerate recorder files: $($_.Exception.Message)"
     }
 }
 
@@ -150,11 +201,13 @@ try {
     $manifest.errors += "Settings audit failed: $($_.Exception.Message)"
 }
 
-try {
-    $events = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = $cutoff; Id = 1000,1001 } -MaxEvents 100 -ErrorAction Stop |
-        Select-Object TimeCreated, Id, ProviderName, Message)
-    $events | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $raw 'application-crashes.json') -Encoding UTF8
-} catch { $manifest.errors += "Application event query failed: $($_.Exception.Message)" }
+if (-not $MetadataOnly) {
+    try {
+        $events = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = $cutoff; Id = 1000,1001 } -MaxEvents 100 -ErrorAction Stop |
+            Select-Object TimeCreated, Id, ProviderName, Message)
+        $events | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $raw 'application-crashes.json') -Encoding UTF8
+    } catch { $manifest.errors += "Application event query failed: $($_.Exception.Message)" }
+}
 $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $raw 'manifest.json') -Encoding UTF8
 
 $zip = Join-Path $TempRoot 'response-audit.zip'
