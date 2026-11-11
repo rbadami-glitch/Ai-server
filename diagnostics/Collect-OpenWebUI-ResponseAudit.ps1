@@ -7,7 +7,8 @@ param(
     [int]$SinceDays = 7,
     [switch]$CollectOnly,
     [switch]$MetadataOnly,
-    [switch]$RunProbe
+    [switch]$RunProbe,
+    [switch]$SavedReplies
 )
 
 $ErrorActionPreference = 'Stop'
@@ -200,6 +201,13 @@ try {
     if ($LASTEXITCODE -ne 0) { $manifest.errors += "Settings audit exited $LASTEXITCODE; see settings-error.txt." }
 } catch {
     $manifest.errors += "Settings audit failed: $($_.Exception.Message)"
+}
+if ($SavedReplies) {
+    & python -B (Join-Path $Repo 'diagnostics\openwebui_saved_reply_audit.py') `
+        --db $Db --model $Model --output (Join-Path $raw 'saved-replies.json')
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $raw 'saved-replies.json'))) {
+        throw 'Saved reply audit did not finish. Temporary files were kept; no upload was attempted.'
+    }
 }
 if ($RunProbe) {
     & python -B (Join-Path $Repo 'diagnostics\openwebui_live_response_probe.py') `

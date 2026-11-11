@@ -27,6 +27,8 @@ The existing GitHub repository is public. The local private key for this audit i
 
 `-RunProbe -MetadataOnly` also sends one synthetic streaming request to the local Open WebUI API. It prompts for an API key without displaying or saving it, omits `max_tokens` from the request, and records HTTP status, timing, usage counts, stream completion marker, and `finish_reason` in `live-probe.json` inside the encrypted archive. It saves no prompt or response text. The prompt asks for 120 integers and may consume a few hundred output tokens. This measures the direct API path; browser chat may send different account or chat controls. The probe does not modify services or model settings.
 
+`-SavedReplies -MetadataOnly` reads up to 5,000 recent chat records and aggregates assistant finish reasons and incomplete/error flags by day, account limit group, and chat limit group. It exports no chat text, identifiers, names, emails, or exact message times. Missing saved finish reasons are reported as missing metadata, not as proven interruptions. This path makes no inference request.
+
 On the AI server, after pulling the source commit into the clean checkout, run this single command in **Administrator Windows PowerShell**:
 
 ```powershell
