@@ -44,3 +44,26 @@ git -C 'C:\Users\HP\Documents\etag\Documentation\Openwebui\github' fetch origin 
 ```
 
 Delete the temporary data and branch only after analysis and any follow-up capture are complete. Removing a Git branch does not guarantee that GitHub immediately erases its old objects, so protect the private key even after cleanup.
+
+## Temporary browser response metadata capture
+
+`Manage-ResponseMetadataCapture.ps1` installs a small Open WebUI Filter through the local administrator API. It records only UTC time, a short one-way request correlation hash, numeric output budgets, stream setting, terminal reason, token count, and completion/error flags. It reads no message content or user identity. The filter returns every request and event unchanged, records only the specified model with a browser session, stops recording after 24 hours by default, and caps its log at 5 MiB. It remains installed after expiry until disabled. It does not restart services or change model settings. The request hook sees Open WebUI's merged request settings just before provider normalization; later filters or provider translation could still change what reaches the model.
+
+On the AI server, pull the approved source commit into the clean checkout, then run in **Administrator Windows PowerShell**:
+
+```powershell
+$repo = 'E:\AI\ollama\OpenWebUI-Monitoring\github'
+git -C $repo pull --ff-only
+powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'diagnostics\Manage-ResponseMetadataCapture.ps1') -Action Install -Model 'curtiss-wright-corporation'
+```
+
+Enter an Open WebUI administrator API key at the hidden prompt. A lower privilege key fails without changing anything. After installation, use the model in the browser for a few normal replies, including a reply that stalls if it occurs. The capture will not retroactively explain old replies.
+
+When the observation window is complete, disable the filter and collect the metadata. Both commands are PowerShell:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'diagnostics\Manage-ResponseMetadataCapture.ps1') -Action Disable
+powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'diagnostics\Collect-ResponseMetadataCapture.ps1')
+```
+
+The collector validates and copies only the documented fields, encrypts them with the existing public key, and uploads only the encrypted archive to the temporary `response-metadata-capture-20261111` branch. Raw files stay outside Git under `E:\AI\ollama\OpenWebUI-Monitoring\Temp-Response-Metadata-Capture-20261111`. Keep all temporary data and the branch until analysis ends. If the push fails, the folder and branch remain for a retry. The source repository is public; never put the raw log, chat exports, or API key in it.
