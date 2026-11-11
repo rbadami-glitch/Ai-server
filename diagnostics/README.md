@@ -25,6 +25,8 @@ The script samples metadata-only overrides from up to 500 recent chats. It still
 
 The existing GitHub repository is public. The local private key for this audit is kept outside Git; only `response-audit-public.xml` is committed. `Collect-OpenWebUI-ResponseAudit.ps1` creates a temporary server folder containing the settings audit, service inventory, service-to-log mapping, port 80 listener ownership, recent Open WebUI/Ollama service logs, Ollama recorder files, a collection manifest, and recent Windows application crash events. It captures the last 7 days, prioritizes the most recently updated service logs, and captures at most 15 MiB per service log, 5 MiB per recorder file, and 70 MiB total. The manifest records any omitted or truncated material. `-MetadataOnly` skips log and recorder copies for a small follow-up capture. No services or settings are changed.
 
+`-RunProbe -MetadataOnly` also sends one synthetic streaming request to the local Open WebUI API. It prompts for an API key without displaying or saving it, omits `max_tokens` from the request, and records HTTP status, timing, usage counts, stream completion marker, and `finish_reason` in `live-probe.json` inside the encrypted archive. It saves no prompt or response text. The prompt asks for 120 integers and may consume a few hundred output tokens. This measures the direct API path; browser chat may send different account or chat controls. The probe does not modify services or model settings.
+
 On the AI server, after pulling the source commit into the clean checkout, run this single command in **Administrator Windows PowerShell**:
 
 ```powershell

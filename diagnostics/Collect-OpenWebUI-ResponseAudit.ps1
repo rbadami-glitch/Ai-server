@@ -6,7 +6,8 @@ param(
     [string]$Branch = 'response-audit-20261111',
     [int]$SinceDays = 7,
     [switch]$CollectOnly,
-    [switch]$MetadataOnly
+    [switch]$MetadataOnly,
+    [switch]$RunProbe
 )
 
 $ErrorActionPreference = 'Stop'
@@ -199,6 +200,14 @@ try {
     if ($LASTEXITCODE -ne 0) { $manifest.errors += "Settings audit exited $LASTEXITCODE; see settings-error.txt." }
 } catch {
     $manifest.errors += "Settings audit failed: $($_.Exception.Message)"
+}
+if ($RunProbe) {
+    & python -B (Join-Path $Repo 'diagnostics\openwebui_live_response_probe.py') `
+        --url 'http://127.0.0.1' --model $Model `
+        --output (Join-Path $raw 'live-probe.json')
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $raw 'live-probe.json'))) {
+        throw 'Live probe did not finish. Temporary files were kept; no upload was attempted.'
+    }
 }
 
 if (-not $MetadataOnly) {
