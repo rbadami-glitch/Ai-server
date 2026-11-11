@@ -4,7 +4,7 @@ param(
     [string]$Db = 'C:\downloads\open-webui\data\webui.db',
     [string]$TempRoot = 'E:\AI\ollama\OpenWebUI-Monitoring\Temp-Response-Budget-Audit-20261111',
     [string]$Branch = 'response-audit-20261111',
-    [int]$SinceDays = 14,
+    [int]$SinceDays = 7,
     [switch]$CollectOnly
 )
 
@@ -48,7 +48,7 @@ function Copy-LogTail([string]$source, [string]$label, [int64]$maxBytes) {
         if ($item.LastWriteTime -lt $cutoff) { return }
         $capture = [Math]::Min([int64]$item.Length, $maxBytes)
         if ($script:totalCaptured + $capture -gt 70MB) {
-            $manifest.errors += "Skipped ${label}: 70 MiB collection limit reached."
+            $manifest.errors += "Skipped ${label} ($source): 70 MiB collection limit reached."
             return
         }
         $destination = Join-Path $raw $label
@@ -116,9 +116,12 @@ foreach ($path in @(
     'E:\AI\ollama\logs\ollama-service-error.log'
 )) { $candidateLogs.Add($path) }
 $logIndex = 0
-foreach ($path in ($candidateLogs | Select-Object -Unique)) {
+$recentLogs = @($candidateLogs | Select-Object -Unique | ForEach-Object {
+    if (Test-Path -LiteralPath $_ -PathType Leaf) { Get-Item -LiteralPath $_ }
+} | Where-Object { $_.LastWriteTime -ge $cutoff } | Sort-Object LastWriteTime -Descending)
+foreach ($item in $recentLogs) {
     $logIndex++
-    Copy-LogTail $path ('service-log-{0:D2}.txt' -f $logIndex) 15MB
+    Copy-LogTail $item.FullName ('service-log-{0:D2}.txt' -f $logIndex) 15MB
 }
 
 $recorderDir = 'E:\AI\ollama\OpenWebUI-Monitoring\Direct-Usage'

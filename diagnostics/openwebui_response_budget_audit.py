@@ -73,7 +73,7 @@ def control_defaults(params):
 
 
 def table_columns(db, table):
-    if table not in {"config", "model", "user"}:
+    if table not in {"config", "model", "user", "chat"}:
         return set()
     return {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
 
@@ -83,7 +83,8 @@ def database_settings(path, model_id):
         return {"status": "database_not_found"}
     uri = path.resolve().as_uri() + "?mode=ro"
     result = {"status": "read_only", "global_fields": [],
-              "models": [], "account_field_counts": []}
+              "models": [], "account_field_counts": [],
+              "chat_override_field_counts": [], "chats_inspected": 0}
     with closing(sqlite3.connect(uri, uri=True, timeout=5)) as db:
         config_cols = table_columns(db, "config")
         if "data" in config_cols:
@@ -121,6 +122,27 @@ def database_settings(path, model_id):
                     counts[(name, json.dumps(value, sort_keys=True))] += 1
             result["account_field_counts"] = [
                 {"field": name, "value": json.loads(value), "accounts": count}
+                for (name, value), count in sorted(counts.items())
+            ]
+        chat_cols = table_columns(db, "chat")
+        if "chat" in chat_cols:
+            order = " ORDER BY updated_at DESC" if "updated_at" in chat_cols else ""
+            counts = collections.Counter()
+            query = "SELECT chat FROM chat" + order + " LIMIT 500"
+            for (raw,) in db.execute(query):
+                parsed = json_value(raw)
+                if not isinstance(parsed, dict):
+                    continue
+                result["chats_inspected"] += 1
+                fields = selected_fields(parsed.get("params"))
+                fields.update(selected_fields(parsed.get("controls"), "controls"))
+                nested = parsed.get("chat")
+                if isinstance(nested, dict):
+                    fields.update(selected_fields(nested.get("params"), "chat.params"))
+                for name, value in fields.items():
+                    counts[(name, json.dumps(value, sort_keys=True))] += 1
+            result["chat_override_field_counts"] = [
+                {"field": name, "value": json.loads(value), "chats": count}
                 for (name, value), count in sorted(counts.items())
             ]
     return result
