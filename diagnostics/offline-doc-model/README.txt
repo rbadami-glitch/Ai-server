@@ -26,3 +26,10 @@ the original document works; inspect any new error if it still fails.
 
 This immediate fix is in the active uvx cache archive. A future uvx refresh
 can discard it. A durable launcher change is separate work after verification.
+
+Synthetic-Legacy-Word-Test.docx contains only invented material. It has 203
+paragraphs, six tables, and the verification code ORCHID-7319. Convert it
+on the server with LibreOffice to Word 97-2003 .doc before uploading it.
+The test question is: "What is the verification code in this document?"
+Expected answer: ORCHID-7319. This checks a larger legacy Word extraction
+path; it cannot prove the missing original document would process.
