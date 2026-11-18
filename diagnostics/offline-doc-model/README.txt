@@ -34,3 +34,41 @@ https://github.com/apache/poi/blob/trunk/test-data/document/53379.doc
 The test question is: "Which agency is named at the start of this document?"
 Expected answer: Medicines Control Agency. This checks a substantial legacy
 Word extraction path; it cannot prove the missing original file would process.
+
+Durable service repair (prepared 2026-11-19)
+--------------------------------------------
+Prepare-OpenWebUI-DocDurability.ps1 and Activate-OpenWebUI-DocDurability.ps1
+address two remaining restart risks on the Windows server. The preparation
+script checks that port 80 belongs to the active OpenWebUI NSSM service, saves
+the launcher and its shutdown settings under
+E:\AI\ollama\OpenWebUI-Monitoring\Temp-OpenWebUI-Durability-20261119, copies
+the verified model wheel to E:\apps\open-webui\model-wheels, and builds a
+candidate launcher. Stage makes no live launcher or service change.
+
+The candidate retains open-webui@latest and unstructured[doc]. It adds the
+local wheel with uvx --with, plus spaCy >=3.8,<3.9 to match the wheel. An uvx
+preflight imports and loads the model without starting OpenWebUI and refuses
+an unexpected OpenWebUI version. Preflight uses the service's uv cache offline
+by default; -AllowNetwork permits a retry if that cache is incomplete.
+
+Activation copies the candidate launcher and sets NSSM AppStopMethodSkip=0
+and AppKillProcessTree=1. NSSM documentation says 15 skips every stop method;
+0 enables graceful attempts and forceful termination as a last resort.
+Activation safely clears only a previously identified old port 80 worker if
+the first service stop leaves it behind. It then starts OpenWebUI and checks
+its health and service ownership. VerifyRestart performs one more restart
+and requires a new healthy port 80 worker and the previous worker's exit.
+Both modes attempt automatic restoration if their verification fails.
+
+The original launcher and registry values remain in the server-only
+temporary backup until the operator chooses to remove them. Rollback
+restores those exact values and restarts the service. It leaves the copied
+wheel in place because the inactive file does not affect the original
+launcher. This procedure never changes CWAI-OpenWebUI or the database.
+
+Run preparation modes in order: Inspect, Stage, Preflight. Apply and then
+VerifyRestart with the activation script only after Preflight reports
+ReadyForActivation=True. If activation or verification fails, inspect the
+automatic rollback result; -Mode Rollback is also available while the
+manifest is in an active state. Run service-changing modes in Administrator
+PowerShell at a time when a brief OpenWebUI interruption is acceptable.
