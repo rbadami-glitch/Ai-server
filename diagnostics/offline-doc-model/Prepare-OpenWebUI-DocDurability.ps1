@@ -6,12 +6,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$serviceName = 'OpenWebUI'
+$serviceName = 'OpenWebUIService'
 $launcher = 'E:\apps\open-webui\start-openwebui.ps1'
 $stableWheel = 'E:\apps\open-webui\model-wheels\en_core_web_sm-3.8.0-py3-none-any.whl'
 $sourceWheel = Join-Path $PSScriptRoot 'en_core_web_sm-3.8.0-py3-none-any.whl'
 $expectedWheelHash = '1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85'
-$regKey = 'HKLM:\SYSTEM\CurrentControlSet\Services\OpenWebUI\Parameters'
+$regKey = 'HKLM:\SYSTEM\CurrentControlSet\Services\OpenWebUIService\Parameters'
 $manifestPath = Join-Path $TempRoot 'stage.json'
 $backupPath = Join-Path $TempRoot 'start-openwebui.ps1.backup'
 $candidatePath = Join-Path $TempRoot 'start-openwebui.ps1.candidate'
@@ -21,13 +21,17 @@ function FileHash([string] $Path) {
 }
 
 function Get-LiveState {
-    $svc = Get-CimInstance Win32_Service -Filter "Name='OpenWebUI'"
+    $svc = Get-CimInstance Win32_Service -Filter "Name='$serviceName'"
     if (-not $svc -or $svc.State -ne 'Running' -or -not $svc.ProcessId) {
-        throw 'OpenWebUI service is not running.'
+        throw 'OpenWebUIService is not running.'
     }
     $other = Get-CimInstance Win32_Service -Filter "Name='CWAI-OpenWebUI'"
     if ($other -and $other.State -ne 'Stopped') {
         throw 'CWAI-OpenWebUI is not stopped; service ownership needs review.'
+    }
+    $duplicate = Get-CimInstance Win32_Service -Filter "Name='OpenWebUI'"
+    if ($duplicate -and $duplicate.State -ne 'Stopped') {
+        throw 'Duplicate OpenWebUI service is not stopped; service ownership needs review.'
     }
     $params = Get-ItemProperty -LiteralPath $regKey
     if ($params.AppParameters -notmatch [regex]::Escape($launcher)) {

@@ -5,10 +5,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$serviceName = 'OpenWebUIService'
 $manifestPath = Join-Path $TempRoot 'stage.json'
 $backupPath = Join-Path $TempRoot 'start-openwebui.ps1.backup'
 $candidatePath = Join-Path $TempRoot 'start-openwebui.ps1.candidate'
-$regKey = 'HKLM:\SYSTEM\CurrentControlSet\Services\OpenWebUI\Parameters'
+$regKey = 'HKLM:\SYSTEM\CurrentControlSet\Services\OpenWebUIService\Parameters'
 $expectedLauncher = 'E:\apps\open-webui\start-openwebui.ps1'
 $expectedWheel = 'E:\apps\open-webui\model-wheels\en_core_web_sm-3.8.0-py3-none-any.whl'
 $expectedWheelHash = '1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85'
@@ -38,13 +39,17 @@ function Get-Listener {
 }
 
 function Assert-ServiceOwnsListener($Listener) {
-    $svc = Get-CimInstance Win32_Service -Filter "Name='OpenWebUI'"
+    $svc = Get-CimInstance Win32_Service -Filter "Name='$serviceName'"
     if (-not $svc -or $svc.State -ne 'Running' -or -not $svc.ProcessId) {
-        throw 'OpenWebUI service is not running.'
+        throw 'OpenWebUIService is not running.'
     }
     $other = Get-CimInstance Win32_Service -Filter "Name='CWAI-OpenWebUI'"
     if ($other -and $other.State -ne 'Stopped') {
         throw 'CWAI-OpenWebUI is not stopped.'
+    }
+    $duplicate = Get-CimInstance Win32_Service -Filter "Name='OpenWebUI'"
+    if ($duplicate -and $duplicate.State -ne 'Stopped') {
+        throw 'Duplicate OpenWebUI service is not stopped.'
     }
     $current = $Listener.Pid
     for ($depth = 0; $depth -lt 16 -and $current; $depth++) {
@@ -57,10 +62,10 @@ function Assert-ServiceOwnsListener($Listener) {
 }
 
 function Stop-ServiceAndClearListener($Known) {
-    $svc = Get-Service -Name OpenWebUI
+    $svc = Get-Service -Name $serviceName
     if ($svc.Status -ne 'Stopped') {
-        Stop-Service -Name OpenWebUI -ErrorAction Stop
-        (Get-Service -Name OpenWebUI).WaitForStatus(
+        Stop-Service -Name $serviceName -ErrorAction Stop
+        (Get-Service -Name $serviceName).WaitForStatus(
             'Stopped', [TimeSpan]::FromMinutes(2))
     }
     $leftover = Get-Listener
@@ -201,7 +206,7 @@ function Restore-Original {
         throw 'Original launcher could not be restored byte for byte.'
     }
     Set-RegistryOriginal
-    Start-Service -Name OpenWebUI -ErrorAction Stop
+    Start-Service -Name $serviceName -ErrorAction Stop
     $recovered = Wait-HealthyListener
     $manifest.state = 'rolled_back'
     $manifest.rollback_utc = (Get-Date).ToUniversalTime().ToString('o')
@@ -272,7 +277,7 @@ if ($Mode -eq 'Apply') {
             throw 'NSSM shutdown settings did not save as 0/1.'
         }
         Stop-ServiceAndClearListener @($old)
-        Start-Service -Name OpenWebUI -ErrorAction Stop
+        Start-Service -Name $serviceName -ErrorAction Stop
         $new = Wait-HealthyListener
         if ($new.Pid -eq $old.Pid -and $new.CreatedUtc -eq $old.CreatedUtc) {
             throw 'Old worker still serves port 80 after activation.'
@@ -317,7 +322,7 @@ if (-not $before -or $before.Pid -ne [int]$manifest.new_listener_pid -or
 Assert-ServiceOwnsListener $before | Out-Null
 try {
     Write-Host "Restarting OpenWebUI once to verify worker replacement; old PID $($before.Pid)..."
-    Restart-Service -Name OpenWebUI -ErrorAction Stop
+    Restart-Service -Name $serviceName -ErrorAction Stop
     $after = Wait-HealthyListener
     if ($after.Pid -eq $before.Pid -and $after.CreatedUtc -eq $before.CreatedUtc) {
         throw 'Restart kept the old port 80 worker.'
