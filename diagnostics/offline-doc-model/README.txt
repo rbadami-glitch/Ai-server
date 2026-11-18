@@ -65,9 +65,10 @@ temporary backup until the operator chooses to remove them. Rollback
 restores those exact values and restarts the service. It leaves the copied
 wheel in place because the inactive file does not affect the original
 launcher. This procedure never changes CWAI-OpenWebUI, the separate OpenWebUI
-service, or the database. The separate OpenWebUI service must be stopped before
-staging and remain stopped during activation; otherwise it can race for port
-80. Its shutdown and startup settings require a separate backed-up change.
+service, or the database. The separate OpenWebUI service must be stopped and
+set to Manual before staging, then remain so during activation; otherwise it
+can race for port 80. Its shutdown and startup settings require a separate
+backed-up change.
 
 Run preparation modes in order: Inspect, Stage, Preflight. Apply and then
 VerifyRestart with the activation script only after Preflight reports

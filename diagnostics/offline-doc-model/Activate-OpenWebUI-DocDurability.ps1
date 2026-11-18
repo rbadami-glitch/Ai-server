@@ -48,8 +48,9 @@ function Assert-ServiceOwnsListener($Listener) {
         throw 'CWAI-OpenWebUI is not stopped.'
     }
     $duplicate = Get-CimInstance Win32_Service -Filter "Name='OpenWebUI'"
-    if ($duplicate -and $duplicate.State -ne 'Stopped') {
-        throw 'Duplicate OpenWebUI service is not stopped.'
+    if ($duplicate -and
+        ($duplicate.State -ne 'Stopped' -or $duplicate.StartMode -eq 'Auto')) {
+        throw 'Duplicate OpenWebUI service must stay stopped and set to Manual.'
     }
     $current = $Listener.Pid
     for ($depth = 0; $depth -lt 16 -and $current; $depth++) {

@@ -30,8 +30,9 @@ function Get-LiveState {
         throw 'CWAI-OpenWebUI is not stopped; service ownership needs review.'
     }
     $duplicate = Get-CimInstance Win32_Service -Filter "Name='OpenWebUI'"
-    if ($duplicate -and $duplicate.State -ne 'Stopped') {
-        throw 'Duplicate OpenWebUI service is not stopped; service ownership needs review.'
+    if ($duplicate -and
+        ($duplicate.State -ne 'Stopped' -or $duplicate.StartMode -eq 'Auto')) {
+        throw 'Duplicate OpenWebUI service must be stopped and set to Manual before staging.'
     }
     $params = Get-ItemProperty -LiteralPath $regKey
     if ($params.AppParameters -notmatch [regex]::Escape($launcher)) {
