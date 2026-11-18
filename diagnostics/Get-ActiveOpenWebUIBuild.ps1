@@ -119,6 +119,7 @@ if ($parent -and -not (Test-Path -LiteralPath $parent)) {
 }
 $report | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $OutputPath -Encoding UTF8
 Write-Host "Active Open WebUI: $($details.version)"
+Write-Host "Frontend SHA256: $($details.frontend_index_sha256); package metadata SHA256: $($details.metadata_sha256)"
 Write-Host "Unstructured version: $($details.unstructured_version); LibreOffice installed: $($details.libreoffice_installed)"
 Write-Host "Latest real .doc: status=$($details.latest_legacy_doc.status); content characters=$($details.latest_legacy_doc.content_characters); error category=$($details.latest_legacy_doc.error_category)"
 Write-Host "Private report saved on server: $OutputPath"
