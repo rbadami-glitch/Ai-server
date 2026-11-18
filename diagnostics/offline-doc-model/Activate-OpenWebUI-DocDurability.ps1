@@ -27,8 +27,10 @@ function Get-Listener {
         Select-Object -ExpandProperty OwningProcess -Unique)
     if ($owners.Count -gt 1) { throw 'More than one port 80 owner was found.' }
     if ($owners.Count -eq 0) { return $null }
-    $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$($owners[0])"
-    if (-not $proc) { throw 'Port 80 owner disappeared during inspection.' }
+    # The listener may exit between the TCP and process queries during shutdown.
+    # Treat that as a transient absence; the caller polls again before proceeding.
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$($owners[0])" -ErrorAction SilentlyContinue
+    if (-not $proc) { return $null }
     return [pscustomobject]@{
         Pid = [int]$proc.ProcessId
         CreatedUtc = $proc.CreationDate.ToUniversalTime().ToString('o')
@@ -80,7 +82,8 @@ function Stop-ServiceAndClearListener($Known) {
 }
 
 function Wait-HealthyListener {
-    for ($i = 0; $i -lt 36; $i++) {
+    # A cold uvx launch can take longer than three minutes, including rollback.
+    for ($i = 0; $i -lt 72; $i++) {
         $listener = Get-Listener
         if ($listener) {
             try {
@@ -99,7 +102,7 @@ function Wait-HealthyListener {
         }
         Start-Sleep -Seconds 5
     }
-    throw 'OpenWebUI did not return a healthy port 80 response in three minutes.'
+    throw 'OpenWebUI did not return a healthy port 80 response in six minutes.'
 }
 
 function Assert-ActiveModelLoads($Listener) {
