@@ -38,7 +38,7 @@ with patch.dict(sys.modules, {"pydantic": module(
     spec.loader.exec_module(tool_code)
 
 
-def valid_zip(report=None) -> bytes:
+def valid_zip(report=None, editable=False) -> bytes:
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as archive:
         archive.writestr("template.tex", "example")
@@ -46,6 +46,10 @@ def valid_zip(report=None) -> bytes:
         archive.writestr("README.txt", "review")
         archive.writestr("conversion-report.json", json.dumps(
             report or {"status": "fixed_layout_draft_requires_human_review"}))
+        if editable:
+            archive.writestr("editable.tex", "reflowing draft")
+            archive.writestr("editable-preview.pdf", b"%PDF-1.7\n")
+            archive.writestr("semantic-report.json", json.dumps(report["editable_draft"]))
     return output.getvalue()
 
 
@@ -103,6 +107,14 @@ class DocumentConversionToolTests(unittest.TestCase):
         self.assertEqual(report, tool_code._verify_zip(valid_zip(report)))
         with self.assertRaises(ValueError):
             tool_code._verify_zip(valid_zip({**report, "ocr_verified": True}))
+
+    def test_optional_reflowing_draft_must_be_present_when_reported(self):
+        report = {"status": "fixed_layout_draft_requires_human_review",
+                  "editable_draft": {"status": "reflowing_draft_requires_human_review",
+                                     "text_coverage": 0.99}}
+        self.assertEqual(report, tool_code._verify_zip(valid_zip(report, editable=True)))
+        with self.assertRaises(ValueError):
+            tool_code._verify_zip(valid_zip(report))
 
     def test_missing_context_and_configuration_do_not_claim_success(self):
         tool = tool_code.Tools()

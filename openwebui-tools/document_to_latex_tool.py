@@ -60,6 +60,15 @@ def _verify_zip(data: bytes) -> dict:
                     or report.get("visual_fidelity_verified") is not False
                     or report.get("ocr_verified") is not False):
                 raise ValueError("The OCR draft lacks a valid uncertainty report")
+        editable = report.get("editable_draft")
+        if (report.get("status") == "fixed_layout_draft_requires_human_review"
+                and isinstance(editable, dict)
+                and editable.get("status") == "reflowing_draft_requires_human_review"):
+            if (not {"editable.tex", "editable-preview.pdf", "semantic-report.json"}.issubset(archive.namelist())
+                    or not archive.read("editable-preview.pdf").startswith(b"%PDF-")
+                    or json.loads(archive.read("semantic-report.json")) != editable
+                    or editable.get("text_coverage", 0) < 0.90):
+                raise ValueError("The optional editable draft is incomplete")
         return report
 
 
@@ -253,10 +262,20 @@ class Tools:
                         "The recognized words and formatting are unverified. "
                         "Compare every page with the uploaded PDF before editing or using it."
                     )
+                editable = report.get("editable_draft")
+                editable_notice = (
+                    "The ZIP also contains editable.tex and editable-preview.pdf, a separate "
+                    "reflowing draft. Its visual formatting was not verified; compare it with "
+                    "the source before using it. "
+                    if isinstance(editable, dict)
+                    and editable.get("status") == "reflowing_draft_requires_human_review"
+                    else "No reviewed reflowing version was produced. "
+                )
                 return (
                     "Fixed-layout LaTeX draft created: " + downloads +
                     "Inspect every preview page. Text is editable but longer "
-                    "changes do not reflow; this is not a fully semantic template."
+                    "changes do not reflow; this is not a fully semantic template. "
+                    + editable_notice
                 )
         except Exception as error:
             return ("Document conversion failed. No verified download is available. "

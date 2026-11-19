@@ -19,6 +19,7 @@ A synthetic scanned PDF was recognized locally using PyMuPDF and a separately su
 The Tool now stores a verified project ZIP and separately attempts a direct preview-PDF upload. If preview storage fails, the verified project ZIP remains available and contains the preview. Both downloads are checked against the requesting user's ownership before being returned.
 
 The private test model exposed a separate failure: after a successful conversion Tool call, the language model wrote an unrelated inline LaTeX template and claimed it was easy to edit. The two verified file cards were present, but the model-authored prose was misleading. `verified_latex_reply_filter.py` is a private-model outlet guard that replaces the final prose with the exact Tool result whenever this Tool ran. It preserves the Tool's file cards. Test this guard on the private model before considering wider use. It does not guarantee that the model will call the Tool for every conversion request; that still needs a routing solution and evaluation.
+When the visual ZIP also contains a reflowing Word draft, the Tool now identifies `editable.tex` and `editable-preview.pdf` explicitly and says that the editable version's appearance was not verified. An inline LaTeX block written by the model is not an evaluated deliverable.
 
 ## Required gates before shared-model rollout
 
