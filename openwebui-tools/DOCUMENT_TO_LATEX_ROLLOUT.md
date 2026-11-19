@@ -38,13 +38,17 @@ The setup prints the five absolute paths for the Tool Valves. Confirm that it re
 
 Tectonic requires `TECTONIC_CACHE_DIR` to point directly to the copied `localappdata\TectonicProject\Tectonic\cache` folder. The worker sets this environment variable for every render. Changing `LOCALAPPDATA` alone does not redirect Tectonic's cache on Windows.
 
-## Open WebUI pilot
+## Automatic Open WebUI pilot
 
-1. As an administrator, create a new Workspace Tool named `Document to LaTeX pilot`. Paste the contents of the printed `tool_source` file into the Tool editor. Do not attach it to the shared production model yet.
-2. In the Tool's Valves, enter the printed `worker_python`, `worker_script`, `libreoffice_exe`, `tectonic_exe`, and `worker_localappdata` paths. Keep the tool restricted to the pilot user.
-3. Start a new pilot chat and enable this Tool for that chat. Attach a synthetic DOC, DOCX, or PDF whose contents and expected appearance are known. Ask: `Use the document conversion tool on the attached file. Give me the downloadable LaTeX draft and state its limitations.`
-4. Download the ZIP, open `preview.pdf`, and compare each page against the original. Verify that `template.tex` and any image assets exist. Check an unsupported scanned PDF returns `ocr_required` without a download. Only then consider enabling the Tool on the intended model.
-5. For routine use, add a model instruction that tells the assistant to call this Tool when the user asks to convert an attached document to LaTeX, and to report a tool failure without inventing a file or claiming layout fidelity. Do not call it for ordinary document questions.
+Users should attach a document and ask for a LaTeX template normally. They should not select a Tool in the chat composer.
+
+1. As an administrator, create a Workspace Tool named `Document to LaTeX pilot`. Paste the contents of the printed `tool_source` file into the Tool editor. In its Valves, enter the printed `worker_python`, `worker_script`, `libreoffice_exe`, `tectonic_exe`, and `worker_localappdata` paths. Keep access restricted to the pilot account.
+2. Clone the intended Open WebUI model into a private pilot model. In the clone's **Tools** row, attach `Document to LaTeX pilot`. Use Native function calling. Leave the shared production model unchanged during the pilot.
+3. Append this narrow instruction to the pilot model's system prompt: `When a user asks to convert or recreate an attached DOC, DOCX, or PDF as LaTeX, call convert_attached_document_to_latex. Return the verified download link and explain that longer edits to this fixed-layout draft may overlap. If the tool fails, report the failure; do not invent a file. For ordinary questions about a document, answer normally without conversion.`
+4. In a new chat using the pilot model, attach one synthetic document and ask naturally: `Turn this document into a LaTeX template with the same layout.` Do not enable a Tool in the chat. Confirm the model called the Tool and produced a working ZIP link. Inspect `preview.pdf`, `template.tex`, and assets. Also try a second phrasing and an ordinary document question to check that conversion is triggered only when requested.
+5. After the pilot succeeds, grant the intended users read access to the Tool and attach it to the shared model through **Workspace → Models → Tools**. Append the same narrow instruction to that model. Model-level attachment does not bypass Tool access control. Disable or detach the Tool if the model calls it incorrectly.
+
+Native tool selection is decided by the model, so model-level attachment alone does not guarantee every paraphrase will trigger conversion. If pilot phrasings miss the Tool, do not describe the feature as reliable; investigate model tool-calling support or add a deterministic server-side router before broad rollout.
 
 The live Open WebUI Workspace Tool path has not yet been tested on the AI server. The local tests verify the 0.13.4 API shape and mocked upload flow, but the pilot must confirm that attachments reach the Tool and the generated ZIP is accessible to the requesting user.
 
@@ -52,4 +56,4 @@ The worker runs under the Open WebUI service identity. Keep the Tool restricted 
 
 ## Rollback
 
-Disable or remove the pilot Tool from the model/chat. Existing document Q&A and file processing continue through their previous paths. Do not delete the server staging or converter directory during rollback; retain them for diagnosis. No Open WebUI service restart is required for this Tool rollback.
+Detach or disable the Tool from the model. Existing document Q&A and file processing continue through their previous paths. Do not delete the server staging or converter directory during rollback; retain them for diagnosis. No Open WebUI service restart is required for this Tool rollback.
