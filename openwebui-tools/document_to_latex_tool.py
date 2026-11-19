@@ -86,7 +86,7 @@ const state = window[key] || (window[key] = { names: {}, installed: false, timer
 Object.assign(state.names, names);
 if (!state.installed) {
   state.installed = true;
-  const showStatus = (message, hold = false) => {
+  const showStatus = (message, hold = false, percent = null) => {
     let notice = document.getElementById('verified-latex-download-status');
     if (!notice) {
       notice = document.createElement('div');
@@ -101,8 +101,17 @@ if (!state.installed) {
       document.body.appendChild(notice);
     }
     notice.textContent = message;
+    if (hold) {
+      const progress = document.createElement('progress');
+      progress.max = 100;
+      if (percent !== null) progress.value = percent;
+      Object.assign(progress.style, {
+        display: 'block', width: '100%%', height: '0.5rem', marginTop: '0.5rem'
+      });
+      notice.appendChild(progress);
+    }
     clearTimeout(state.timer);
-    if (!hold) state.timer = setTimeout(() => notice.remove(), 3500);
+    if (!hold) state.timer = setTimeout(() => notice.remove(), 8000);
   };
   document.addEventListener('click', async (event) => {
     if (!(event.target instanceof Element)) return;
@@ -117,7 +126,8 @@ if (!state.installed) {
     if (!match || url.origin !== window.location.origin || !state.names[match[1]]) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    showStatus(`Downloading ${state.names[match[1]]}…`, true);
+    const filename = state.names[match[1]];
+    showStatus(`Connecting to download: ${filename}`, true);
     try {
       const token = window.localStorage.getItem('token');
       const response = await fetch(url.href, {
@@ -125,15 +135,37 @@ if (!state.installed) {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
       if (!response.ok) throw new Error(`Download failed (${response.status})`);
-      const objectUrl = URL.createObjectURL(await response.blob());
+      const total = Number(response.headers.get('Content-Length')) || 0;
+      const chunks = [];
+      let received = 0;
+      if (response.body) {
+        const reader = response.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.byteLength;
+          const percent = total ? Math.min(100, Math.round(received * 100 / total)) : null;
+          const amount = (received / 1048576).toFixed(1);
+          showStatus(total ? `Downloading ${filename}: ${percent}%%` :
+            `Downloading ${filename}: ${amount} MB`, true, percent);
+        }
+      } else {
+        chunks.push(await response.blob());
+      }
+      showStatus(`Preparing ${filename} for your browser…`, true, 100);
+      const blob = new Blob(chunks, {
+        type: response.headers.get('Content-Type') || 'application/octet-stream'
+      });
+      const objectUrl = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = objectUrl;
-      anchor.download = state.names[match[1]];
+      anchor.download = filename;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
       setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
-      showStatus(`Download started: ${state.names[match[1]]}`);
+      showStatus(`Sent to your browser: ${filename}. Check Downloads.`);
     } catch (error) {
       console.error('LaTeX download failed', error);
       showStatus('Download failed. Please try again.');

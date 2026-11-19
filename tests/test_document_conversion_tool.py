@@ -236,8 +236,9 @@ class DocumentConversionToolTests(unittest.TestCase):
                 self.assertIn(saved_id, events[0]["data"]["code"])
                 self.assertIn(preview_id, events[0]["data"]["code"])
                 self.assertIn("event.preventDefault()", events[0]["data"]["code"])
-                self.assertIn("Downloading ${state.names[match[1]]}", events[0]["data"]["code"])
-                self.assertIn("Download started:", events[0]["data"]["code"])
+                self.assertIn("response.body.getReader()", events[0]["data"]["code"])
+                self.assertIn("document.createElement('progress')", events[0]["data"]["code"])
+                self.assertIn("Check Downloads.", events[0]["data"]["code"])
                 self.assertNotIn("window.open", events[0]["data"]["code"])
 
                 preview_fails = True
