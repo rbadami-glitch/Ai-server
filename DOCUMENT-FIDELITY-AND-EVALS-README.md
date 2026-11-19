@@ -16,6 +16,7 @@ Status: recorded on 2026-11-19. This is a plan, not a deployed fix. Keep custome
    `diagnostics/locate_chat_upload.py` is the read-only first step: it finds the attached file record and reports its location and binary signature without printing chat or document content.
 2. Build a separate, opt-in conversion path for document transformation requests. Keep ordinary document Q&A on its existing RAG path. The conversion path must read the original file bytes rather than only retrieved text chunks.
 3. For `.doc`, use an offline local office converter to create `.docx` for structural inspection and PDF for a visual reference. Extract headings, tables, headers, footers, page settings, images, and named styles. Apply OCR only to scanned pages or embedded images that contain text.
+   `diagnostics/inspect_word_layout.py` reports content-free counts from the converted `.docx`; it is a triage tool, not a conversion-fidelity score.
 4. Generate a downloadable `.tex` file with any required image/assets directory. Compile it, compare rendered pages against the source PDF, and report unsupported or uncertain formatting instead of claiming an exact match.
 5. Prototype with a synthetic public fixture, then validate against the customer file privately on the server. Keep the current production service untouched until the workflow has passed those checks. Rollback should disable the conversion tool without altering the existing RAG path.
 
