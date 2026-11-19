@@ -47,6 +47,7 @@ def _verify_zip(data: bytes) -> dict:
         if report.get("status") not in {
             "fixed_layout_draft_requires_human_review",
             "reflowing_word_draft_requires_human_review",
+            "ocr_text_draft_requires_human_review",
         }:
             raise ValueError("The worker did not verify the draft")
         if report.get("status") == "reflowing_word_draft_requires_human_review":
@@ -54,6 +55,11 @@ def _verify_zip(data: bytes) -> dict:
                     or report.get("visual_fidelity_verified") is not False
                     or not isinstance(report.get("page_geometry_match"), bool)):
                 raise ValueError("The editable draft lacks a valid quality report")
+        if report.get("status") == "ocr_text_draft_requires_human_review":
+            if (report.get("recognized_characters", 0) < 10
+                    or report.get("visual_fidelity_verified") is not False
+                    or report.get("ocr_verified") is not False):
+                raise ValueError("The OCR draft lacks a valid uncertainty report")
         return report
 
 
@@ -65,6 +71,7 @@ class Tools:
         tectonic_exe: str = Field(default="", description="Absolute tectonic.exe path with offline cache ready")
         worker_localappdata: str = Field(default="", description="Dedicated LOCALAPPDATA folder containing the Tectonic cache")
         include_editable_draft: bool = Field(default=False, description="Experimental Word reflowing draft; keep disabled for shared rollout")
+        ocr_tessdata: str = Field(default="", description="Optional offline OCR language-data folder for experimental scanned PDFs")
         timeout_seconds: int = Field(default=240, ge=30, le=600)
 
     def __init__(self):
@@ -83,8 +90,9 @@ class Tools:
 
         Use this when the user asks to turn an attached document into a LaTeX
         template. The default output preserves page appearance but longer edits
-        do not reflow. An experimental Word fallback can reflow, but its visual
-        appearance is not verified. Every output requires human review.
+        do not reflow. Experimental Word and scanned-PDF fallbacks can reflow
+        text, but their visual appearance and OCR accuracy are not verified.
+        Every output requires human review.
 
         :param file_id: Optional ID from the current chat when multiple files are attached
         :return: A download only after conversion, rendering, comparison, and storage verification
@@ -148,6 +156,8 @@ class Tools:
                            "--tectonic", config.tectonic_exe]
                 if getattr(config, "include_editable_draft", False):
                     command.append("--include-editable-draft")
+                    if getattr(config, "ocr_tessdata", ""):
+                        command.extend(["--tessdata", config.ocr_tessdata])
                 safe_env = {name: os.environ[name] for name in
                             ("PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "APPDATA",
                              "LOCALAPPDATA", "USERPROFILE") if name in os.environ}
@@ -214,6 +224,12 @@ class Tools:
                         "Open preview.pdf and compare every page with the source. "
                         "Text coverage passed, but the original appearance was not verified."
                         + geometry_notice
+                    )
+                if report["status"] == "ocr_text_draft_requires_human_review":
+                    return (
+                        f"OCR text draft created: [Download {filename}]({url}). "
+                        "The recognized words and formatting are unverified. "
+                        "Compare every page with the uploaded PDF before editing or using it."
                     )
                 return (
                     f"Fixed-layout LaTeX draft created: [Download {filename}]({url}). "

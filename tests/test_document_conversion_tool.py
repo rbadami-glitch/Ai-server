@@ -96,6 +96,14 @@ class DocumentConversionToolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             tool_code._verify_zip(valid_zip({**report, "page_geometry_match": None}))
 
+    def test_ocr_fallback_must_report_unverified_text_and_layout(self):
+        report = {"status": "ocr_text_draft_requires_human_review",
+                  "recognized_characters": 25, "visual_fidelity_verified": False,
+                  "ocr_verified": False}
+        self.assertEqual(report, tool_code._verify_zip(valid_zip(report)))
+        with self.assertRaises(ValueError):
+            tool_code._verify_zip(valid_zip({**report, "ocr_verified": True}))
+
     def test_missing_context_and_configuration_do_not_claim_success(self):
         tool = tool_code.Tools()
         result = asyncio.run(tool.convert_attached_document_to_latex())

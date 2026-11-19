@@ -14,6 +14,8 @@ An arbitrary input cannot be guaranteed to be both visually identical and freely
 
 The existing visual route passed a synthetic DOC, synthetic PDF, and one private five-page DOC with text and image placement checked against a PDF reference. A private 30-page DOC with mixed page sizes exceeds its current limits. The semantic Word prototype renders headings, body text, a table, and a header image; a synthetic 25-page DOCX also rendered to 25 pages. When the visual route rejects that synthetic document for page count, the experimental Word fallback returns a 25-page editable draft with complete text coverage. However, a private five-page evaluation had minimum page ink overlap near 0.05 despite 0.99 text coverage. The semantic route is therefore behind an explicit experimental flag and is not enabled for the shared model.
 
+A synthetic scanned PDF was recognized locally using PyMuPDF and a separately supplied offline English Tesseract language file. The OCR draft rendered with the expected text, but OCR accuracy and layout remain unverified. The language file is not in this public source repository. The server must obtain and verify it separately before an OCR trial.
+
 ## Required gates before shared-model rollout
 
 1. Build synthetic evaluation documents for short and long DOC/DOCX, mixed orientation, headings, lists, merged/nested tables, images, headers/footers, non-ASCII text, and malformed/oversized files. Include selectable and scanned PDFs.

@@ -24,6 +24,7 @@ from xml.etree import ElementTree as ET
 import pymupdf
 
 from pdf_to_latex_layout import run as draft_from_pdf
+from ocr_to_latex import convert as ocr_text_from_pdf
 from word_to_latex import Draft as WordDraft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -386,6 +387,65 @@ def build_editable_fallback(source: Path, output: Path, soffice: Path, tectonic:
         return report
 
 
+def build_ocr_fallback(source: Path, output: Path, tectonic: Path, tessdata: Path) -> dict:
+    """Experimental local OCR text fallback for scanned English PDFs."""
+    if output.exists() or output.suffix.lower() != ".zip" or not output.parent.is_dir():
+        raise ConversionError("output_must_be_new_zip", "input")
+    checkout = Path(__file__).resolve().parent.parent
+    if source.resolve().is_relative_to(checkout) or output.resolve().is_relative_to(checkout):
+        raise ConversionError("private_paths_required", "input")
+    if validate_input(source) != ".pdf":
+        raise ConversionError("ocr_fallback_requires_pdf", "input")
+    if not tectonic.is_file() or not (tessdata / "eng.traineddata").is_file():
+        raise ConversionError("offline_ocr_unavailable", "preflight")
+    with tempfile.TemporaryDirectory(prefix="openwebui-ocr-") as temporary:
+        work = Path(temporary)
+        draft = work / "draft"
+        try:
+            report = ocr_text_from_pdf(source, draft, tessdata)
+        except (ValueError, RuntimeError) as error:
+            raise ConversionError("ocr_text_unavailable", "ocr") from error
+        cache_root = os.environ.get("LOCALAPPDATA")
+        if not cache_root:
+            raise ConversionError("tectonic_cache_unavailable", "preflight")
+        cache = Path(cache_root) / "TectonicProject" / "Tectonic" / "cache"
+        if not (cache / "bundles" / "data").is_dir():
+            raise ConversionError("tectonic_cache_unavailable", "preflight")
+        env = os.environ.copy()
+        env["TECTONIC_CACHE_DIR"] = str(cache)
+        env["FONTCONFIG_FILE"] = str(font_config(work))
+        rendered_dir = draft / "rendered"
+        rendered_dir.mkdir()
+        run_command(
+            [str(tectonic), "template.tex", "--only-cached", "--untrusted",
+             "--outdir", str(rendered_dir)],
+            cwd=draft, timeout=90, env=env,
+        )
+        rendered = rendered_dir / "template.pdf"
+        if not rendered.is_file():
+            raise ConversionError("rendered_pdf_missing", "render")
+        with pymupdf.open(rendered) as preview:
+            if not preview or not any(page.get_text().strip() for page in preview):
+                raise ConversionError("ocr_preview_empty", "render")
+            report["preview_pages"] = len(preview)
+        with output.open("xb") as stream, zipfile.ZipFile(
+            stream, "w", compression=zipfile.ZIP_DEFLATED
+        ) as archive:
+            archive.write(draft / "template.tex", "template.tex")
+            archive.write(rendered, "preview.pdf")
+            archive.writestr("conversion-report.json", json.dumps(report, indent=2))
+            archive.writestr(
+                "README.txt",
+                "OCR text draft. Recognition may contain mistakes and formatting was "
+                "not preserved. Compare every word and page with the uploaded PDF.\n",
+            )
+        with zipfile.ZipFile(output) as archive:
+            if archive.testzip() is not None:
+                raise ConversionError("corrupt_output", "package")
+        report["output_sha256"] = hashlib.sha256(output.read_bytes()).hexdigest()
+        return report
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True, type=Path)
@@ -394,12 +454,22 @@ def main() -> None:
     parser.add_argument("--tectonic", required=True, type=Path)
     parser.add_argument("--include-editable-draft", action="store_true",
                         help="Experimental Word structure output; not ready for shared-model rollout")
+    parser.add_argument("--tessdata", type=Path,
+                        help="Directory containing a verified offline eng.traineddata file")
     args = parser.parse_args()
     try:
         report = build(args.source, args.output, args.soffice, args.tectonic,
                        include_editable_draft=args.include_editable_draft)
     except ConversionError as error:
-        if args.include_editable_draft and error.code in {
+        if (args.include_editable_draft and error.code == "ocr_required"
+                and args.source.suffix.lower() == ".pdf" and args.tessdata):
+            try:
+                report = build_ocr_fallback(args.source, args.output, args.tectonic, args.tessdata)
+            except ConversionError as fallback_error:
+                print(json.dumps({"ok": False, "code": fallback_error.code,
+                                  "stage": fallback_error.stage}))
+                raise SystemExit(2)
+        elif args.include_editable_draft and error.code in {
             "too_many_pages", "unsupported_layout", "ocr_required", "fidelity_check_failed"
         } and args.source.suffix.lower() in {".doc", ".docx"}:
             try:
