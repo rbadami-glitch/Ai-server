@@ -100,8 +100,8 @@ class Draft:
             value = "".join(escape(item.text or "") for item in run.iter(W + "t"))
             if run.find(W + "tab") is not None:
                 value += " "
-            if run.find(W + "br") is not None:
-                value += r"\\"
+            for line_break in run.findall(W + "br"):
+                value += r"\clearpage" if attr(line_break, "type") == "page" else r"\\"
             props = run.find(W + "rPr")
             if value and props is not None:
                 if props.find(W + "b") is not None:
@@ -122,8 +122,10 @@ class Draft:
                     if image := self.image(legacy_image.get(R + "id"), rels, width):
                         parts.append(image)
         content = "".join(parts).strip()
-        if not content:
+        if not content or content == r"\\":
             return ""
+        if content == r"\clearpage":
+            return content
         props = node.find(W + "pPr")
         style_id = attr(props.find(W + "pStyle"), "val") if props is not None else None
         style = self.styles.get(style_id, (style_id or "").lower())
@@ -197,6 +199,8 @@ class Draft:
                     continue
                 if value:
                     blocks.append(value)
+                if child.tag == W + "p" and child.find(W + "pPr/" + W + "sectPr") is not None:
+                    blocks.append(r"\clearpage")
             if not blocks:
                 raise ValueError("No printable body content found")
             headers = sorted(n for n in self.names if re.fullmatch(r"word/header\d+\.xml", n))
