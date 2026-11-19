@@ -18,6 +18,8 @@ A synthetic scanned PDF was recognized locally using PyMuPDF and a separately su
 
 The Tool now stores a verified project ZIP and separately attempts a direct preview-PDF upload. If preview storage fails, the verified project ZIP remains available and contains the preview. Both downloads are checked against the requesting user's ownership before being returned.
 
+The private test model exposed a separate failure: after a successful conversion Tool call, the language model wrote an unrelated inline LaTeX template and claimed it was easy to edit. The two verified file cards were present, but the model-authored prose was misleading. `verified_latex_reply_filter.py` is a private-model outlet guard that replaces the final prose with the exact Tool result whenever this Tool ran. It preserves the Tool's file cards. Test this guard on the private model before considering wider use. It does not guarantee that the model will call the Tool for every conversion request; that still needs a routing solution and evaluation.
+
 ## Required gates before shared-model rollout
 
 1. Build synthetic evaluation documents for short and long DOC/DOCX, mixed orientation, headings, lists, merged/nested tables, images, headers/footers, non-ASCII text, and malformed/oversized files. Include selectable and scanned PDFs.
