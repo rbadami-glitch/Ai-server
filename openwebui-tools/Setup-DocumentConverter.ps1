@@ -52,6 +52,7 @@ $createSample | & $workerPython - $sample
 if ($LASTEXITCODE -ne 0) { throw 'Could not create the synthetic preflight document.' }
 
 $env:LOCALAPPDATA = Join-Path $root 'localappdata'
+$env:TECTONIC_CACHE_DIR = Join-Path $env:LOCALAPPDATA 'TectonicProject\Tectonic\cache'
 $testZip = Join-Path $sampleDir 'draft.zip'
 & $workerPython (Join-Path $root 'openwebui-tools\document_conversion_worker.py') `
     --source $sample --output $testZip --soffice $SofficeExe `

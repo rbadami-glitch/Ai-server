@@ -133,6 +133,13 @@ def build(source: Path, output: Path, soffice: Path, tectonic: Path) -> dict:
         rendered_dir = draft_dir / "rendered"
         rendered_dir.mkdir()
         env = os.environ.copy()
+        local_app_data = env.get("LOCALAPPDATA")
+        if not local_app_data:
+            raise ConversionError("tectonic_cache_unavailable", "preflight")
+        cache = Path(local_app_data) / "TectonicProject" / "Tectonic" / "cache"
+        if not (cache / "bundles" / "data").is_dir():
+            raise ConversionError("tectonic_cache_unavailable", "preflight")
+        env["TECTONIC_CACHE_DIR"] = str(cache)
         env["FONTCONFIG_FILE"] = str(font_config(work))
         run_command(
             [str(tectonic), "template.tex", "--only-cached", "--untrusted",

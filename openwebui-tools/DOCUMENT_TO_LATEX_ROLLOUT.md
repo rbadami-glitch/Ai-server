@@ -36,6 +36,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Setup or synthetic preflight failed; do not en
 
 The setup prints the five absolute paths for the Tool Valves. Confirm that it reports `"ok": true` and `Preflight passed`. If LibreOffice uses a different path, pass `-SofficeExe` explicitly. Do not use a Python executable in place of LibreOffice in production.
 
+Tectonic requires `TECTONIC_CACHE_DIR` to point directly to the copied `localappdata\TectonicProject\Tectonic\cache` folder. The worker sets this environment variable for every render. Changing `LOCALAPPDATA` alone does not redirect Tectonic's cache on Windows.
+
 ## Open WebUI pilot
 
 1. As an administrator, create a new Workspace Tool named `Document to LaTeX pilot`. Paste the contents of the printed `tool_source` file into the Tool editor. Do not attach it to the shared production model yet.
