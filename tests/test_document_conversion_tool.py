@@ -239,6 +239,8 @@ class DocumentConversionToolTests(unittest.TestCase):
                 self.assertIn("response.body.getReader()", events[0]["data"]["code"])
                 self.assertIn("document.createElement('progress')", events[0]["data"]["code"])
                 self.assertIn("[data-sonner-toaster]", events[0]["data"]["code"])
+                self.assertIn("verifiedLatexSpin", events[0]["data"]["code"])
+                self.assertIn("host.insertAdjacentElement('afterend'", events[0]["data"]["code"])
                 self.assertIn("Check Downloads.", events[0]["data"]["code"])
                 self.assertNotIn("window.open", events[0]["data"]["code"])
 

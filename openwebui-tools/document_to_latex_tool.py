@@ -82,10 +82,18 @@ def _download_interceptor_code(files: list[dict]) -> str:
     return r"""
 const names = %s;
 const key = '__verifiedLatexDownloads';
-const state = window[key] || (window[key] = { names: {}, installed: false, timer: null });
+const state = window[key] || (window[key] = {
+  names: {}, installed: false, timer: null, busy: new Set()
+});
 Object.assign(state.names, names);
 if (!state.installed) {
   state.installed = true;
+  if (!document.getElementById('verified-latex-spinner-style')) {
+    const style = document.createElement('style');
+    style.id = 'verified-latex-spinner-style';
+    style.textContent = '@keyframes verifiedLatexSpin { to { transform: rotate(360deg); } }';
+    document.head.appendChild(style);
+  }
   const showStatus = (message, hold = false, percent = null) => {
     let notice = document.getElementById('verified-latex-download-status');
     if (!notice) {
@@ -137,7 +145,43 @@ if (!state.installed) {
     if (!match || url.origin !== window.location.origin || !state.names[match[1]]) return;
     event.preventDefault();
     event.stopImmediatePropagation();
+    if (state.busy.has(match[1])) return;
+    state.busy.add(match[1]);
     const filename = state.names[match[1]];
+    const host = link || card;
+    let inlineStatus = host.nextElementSibling;
+    if (inlineStatus?.getAttribute('data-verified-latex-status') !== match[1]) {
+      inlineStatus = document.createElement('span');
+      inlineStatus.setAttribute('data-verified-latex-status', match[1]);
+      inlineStatus.setAttribute('role', 'status');
+      inlineStatus.setAttribute('aria-live', 'polite');
+      Object.assign(inlineStatus.style, {
+        display: 'inline-block', marginLeft: '0.5rem', fontSize: '0.75rem',
+        color: '#6b7280'
+      });
+      host.insertAdjacentElement('afterend', inlineStatus);
+    }
+    let spinner = inlineStatus.querySelector('[data-verified-latex-spinner]');
+    let label = inlineStatus.querySelector('[data-verified-latex-label]');
+    if (!spinner || !label) {
+      inlineStatus.textContent = '';
+      spinner = document.createElement('span');
+      spinner.setAttribute('data-verified-latex-spinner', '');
+      Object.assign(spinner.style, {
+        display: 'inline-block', width: '0.75rem', height: '0.75rem',
+        marginRight: '0.375rem', verticalAlign: '-0.1rem', borderRadius: '50%%',
+        border: '2px solid currentColor', borderRightColor: 'transparent',
+        animation: 'verifiedLatexSpin 0.8s linear infinite'
+      });
+      label = document.createElement('span');
+      label.setAttribute('data-verified-latex-label', '');
+      inlineStatus.append(spinner, label);
+    }
+    const setInlineStatus = (message, busy) => {
+      spinner.style.display = busy ? 'inline-block' : 'none';
+      label.textContent = message;
+    };
+    setInlineStatus('Downloading...', true);
     showStatus(`Connecting to download: ${filename}`, true);
     try {
       const token = window.localStorage.getItem('token');
@@ -158,13 +202,15 @@ if (!state.installed) {
           received += value.byteLength;
           const percent = total ? Math.min(100, Math.round(received * 100 / total)) : null;
           const amount = (received / 1048576).toFixed(1);
+          setInlineStatus(total ? `Downloading ${percent}%%` :
+            `Downloading ${amount} MB`, true);
           showStatus(total ? `Downloading ${filename}: ${percent}%%` :
             `Downloading ${filename}: ${amount} MB`, true, percent);
         }
       } else {
         chunks.push(await response.blob());
       }
-      showStatus(`Preparing ${filename} for your browser…`, true, 100);
+      showStatus(`Preparing ${filename} for your browser...`, true, 100);
       const blob = new Blob(chunks, {
         type: response.headers.get('Content-Type') || 'application/octet-stream'
       });
@@ -176,10 +222,14 @@ if (!state.installed) {
       anchor.click();
       anchor.remove();
       setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+      setInlineStatus('Download started - Check Downloads', false);
       showStatus(`Sent to your browser: ${filename}. Check Downloads.`);
     } catch (error) {
       console.error('LaTeX download failed', error);
+      setInlineStatus('Download failed - Try again', false);
       showStatus('Download failed. Please try again.');
+    } finally {
+      state.busy.delete(match[1]);
     }
   }, true);
 }
