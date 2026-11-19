@@ -1,4 +1,4 @@
-"""Open WebUI Workspace tool: opt-in attached document to LaTeX draft.
+"""Open WebUI Workspace tool: attached document to reviewed LaTeX draft.
 
 The administrator configures an offline worker. The model cannot supply a
 filesystem path, and the tool reads only a file attached to this chat and owned
@@ -36,7 +36,7 @@ def _chat_file_ids(files: list[dict] | None) -> list[str]:
     return result
 
 
-def _verify_zip(data: bytes) -> None:
+def _verify_zip(data: bytes) -> dict:
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         required = {"template.tex", "preview.pdf", "conversion-report.json", "README.txt"}
         if not required.issubset(archive.namelist()) or archive.testzip() is not None:
@@ -44,8 +44,15 @@ def _verify_zip(data: bytes) -> None:
         if not archive.read("preview.pdf", pwd=None).startswith(b"%PDF-"):
             raise ValueError("The preview is not a PDF")
         report = json.loads(archive.read("conversion-report.json"))
-        if report.get("status") != "fixed_layout_draft_requires_human_review":
+        if report.get("status") not in {
+            "fixed_layout_draft_requires_human_review",
+            "reflowing_word_draft_requires_human_review",
+        }:
             raise ValueError("The worker did not verify the draft")
+        if report.get("status") == "reflowing_word_draft_requires_human_review":
+            if report.get("text_coverage", 0) < 0.90 or report.get("visual_fidelity_verified") is not False:
+                raise ValueError("The editable draft lacks a valid quality report")
+        return report
 
 
 class Tools:
@@ -55,6 +62,7 @@ class Tools:
         libreoffice_exe: str = Field(default="", description="Absolute soffice.com path")
         tectonic_exe: str = Field(default="", description="Absolute tectonic.exe path with offline cache ready")
         worker_localappdata: str = Field(default="", description="Dedicated LOCALAPPDATA folder containing the Tectonic cache")
+        include_editable_draft: bool = Field(default=False, description="Experimental Word reflowing draft; keep disabled for shared rollout")
         timeout_seconds: int = Field(default=240, ge=30, le=600)
 
     def __init__(self):
@@ -69,11 +77,12 @@ class Tools:
         __metadata__=None,
         __event_emitter__=None,
     ) -> str:
-        """Create a downloadable fixed-layout LaTeX draft from one attached Word or PDF file.
+        """Create a downloadable LaTeX draft from one attached Word or PDF file.
 
         Use this when the user asks to turn an attached document into a LaTeX
-        template. The output preserves page appearance but longer edits do not
-        reflow. It requires visual review before use.
+        template. The default output preserves page appearance but longer edits
+        do not reflow. An experimental Word fallback can reflow, but its visual
+        appearance is not verified. Every output requires human review.
 
         :param file_id: Optional ID from the current chat when multiple files are attached
         :return: A download only after conversion, rendering, comparison, and storage verification
@@ -135,6 +144,8 @@ class Tools:
                            "--source", str(stored_path), "--output", str(output),
                            "--soffice", config.libreoffice_exe,
                            "--tectonic", config.tectonic_exe]
+                if getattr(config, "include_editable_draft", False):
+                    command.append("--include-editable-draft")
                 safe_env = {name: os.environ[name] for name in
                             ("PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "APPDATA",
                              "LOCALAPPDATA", "USERPROFILE") if name in os.environ}
@@ -162,7 +173,7 @@ class Tools:
                 data = output.read_bytes()
                 if len(data) > 25 * 1024 * 1024:
                     return "The converted package exceeds the 25 MB limit. No download was created."
-                _verify_zip(data)
+                report = _verify_zip(data)
 
                 stage = "file_upload"
                 filename = f"latex-draft-{uuid.uuid4().hex[:12]}.zip"
@@ -191,6 +202,12 @@ class Tools:
                         ]}})
                     except Exception:
                         pass
+                if report["status"] == "reflowing_word_draft_requires_human_review":
+                    return (
+                        f"Editable LaTeX draft created: [Download {filename}]({url}). "
+                        "Open preview.pdf and compare every page with the source. "
+                        "Text coverage passed, but the original appearance was not verified."
+                    )
                 return (
                     f"Fixed-layout LaTeX draft created: [Download {filename}]({url}). "
                     "Open preview.pdf and inspect every page. Text is editable but longer "

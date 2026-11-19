@@ -38,15 +38,14 @@ with patch.dict(sys.modules, {"pydantic": module(
     spec.loader.exec_module(tool_code)
 
 
-def valid_zip() -> bytes:
+def valid_zip(report=None) -> bytes:
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as archive:
         archive.writestr("template.tex", "example")
         archive.writestr("preview.pdf", b"%PDF-1.7\n")
         archive.writestr("README.txt", "review")
-        archive.writestr("conversion-report.json", json.dumps({
-            "status": "fixed_layout_draft_requires_human_review"
-        }))
+        archive.writestr("conversion-report.json", json.dumps(
+            report or {"status": "fixed_layout_draft_requires_human_review"}))
     return output.getvalue()
 
 
@@ -84,6 +83,15 @@ class DocumentConversionToolTests(unittest.TestCase):
         tool_code._verify_zip(valid_zip())
         with self.assertRaises((ValueError, zipfile.BadZipFile)):
             tool_code._verify_zip(b"not a zip")
+
+    def test_reflowing_fallback_requires_coverage_and_explicit_visual_limit(self):
+        report = {"status": "reflowing_word_draft_requires_human_review",
+                  "text_coverage": 0.95, "visual_fidelity_verified": False}
+        self.assertEqual(report, tool_code._verify_zip(valid_zip(report)))
+        with self.assertRaises(ValueError):
+            tool_code._verify_zip(valid_zip({**report, "text_coverage": 0.5}))
+        with self.assertRaises(ValueError):
+            tool_code._verify_zip(valid_zip({**report, "visual_fidelity_verified": True}))
 
     def test_missing_context_and_configuration_do_not_claim_success(self):
         tool = tool_code.Tools()

@@ -12,7 +12,7 @@ An arbitrary input cannot be guaranteed to be both visually identical and freely
 
 ## Current evidence
 
-The existing visual route passed a synthetic DOC, synthetic PDF, and one private five-page DOC with text and image placement checked against a PDF reference. A private 30-page DOC with mixed page sizes exceeds its current limits. The semantic Word prototype renders headings, body text, a table, and a header image, but a private five-page evaluation had minimum page ink overlap near 0.05 despite high text coverage. It is therefore behind an explicit experimental flag and is not enabled for the shared model.
+The existing visual route passed a synthetic DOC, synthetic PDF, and one private five-page DOC with text and image placement checked against a PDF reference. A private 30-page DOC with mixed page sizes exceeds its current limits. The semantic Word prototype renders headings, body text, a table, and a header image; a synthetic 25-page DOCX also rendered to 25 pages. When the visual route rejects that synthetic document for page count, the experimental Word fallback returns a 25-page editable draft with complete text coverage. However, a private five-page evaluation had minimum page ink overlap near 0.05 despite 0.99 text coverage. The semantic route is therefore behind an explicit experimental flag and is not enabled for the shared model.
 
 ## Required gates before shared-model rollout
 

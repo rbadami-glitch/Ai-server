@@ -19,6 +19,7 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 import pymupdf
 
@@ -285,6 +286,93 @@ def build(source: Path, output: Path, soffice: Path, tectonic: Path,
         return report
 
 
+def build_editable_fallback(source: Path, output: Path, soffice: Path, tectonic: Path) -> dict:
+    """Experimental Word fallback when a verified visual draft is impossible."""
+    if output.exists() or output.suffix.lower() != ".zip" or not output.parent.is_dir():
+        raise ConversionError("output_must_be_new_zip", "input")
+    checkout = Path(__file__).resolve().parent.parent
+    if source.resolve().is_relative_to(checkout) or output.resolve().is_relative_to(checkout):
+        raise ConversionError("private_paths_required", "input")
+    if validate_input(source) not in {".doc", ".docx"}:
+        raise ConversionError("editable_fallback_requires_word", "input")
+    if not soffice.is_file() or not tectonic.is_file():
+        raise ConversionError("converter_unavailable", "preflight")
+    with tempfile.TemporaryDirectory(prefix="openwebui-editable-") as temporary:
+        work = Path(temporary)
+        reference = office_to_pdf(source, soffice, work)
+        semantic_source = source if source.suffix.lower() == ".docx" else office_to_docx(source, soffice, work)
+        try:
+            data, word_report = WordDraft(semantic_source).build()
+        except (ValueError, KeyError, ET.ParseError, zipfile.BadZipFile) as error:
+            raise ConversionError("editable_source_unsupported", "semantic_conversion") from error
+        draft = work / "draft"
+        draft.mkdir()
+        media = draft / "media"
+        media.mkdir()
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            (draft / "template.tex").write_bytes(archive.read("template.tex"))
+            for name in archive.namelist():
+                if (name.startswith("media/") and
+                        "/" not in name[len("media/"):] and
+                        "\\" not in name and
+                        ".." not in Path(name).parts):
+                    (media / Path(name).name).write_bytes(archive.read(name))
+        cache_root = os.environ.get("LOCALAPPDATA")
+        if not cache_root:
+            raise ConversionError("tectonic_cache_unavailable", "preflight")
+        cache = Path(cache_root) / "TectonicProject" / "Tectonic" / "cache"
+        if not (cache / "bundles" / "data").is_dir():
+            raise ConversionError("tectonic_cache_unavailable", "preflight")
+        env = os.environ.copy()
+        env["TECTONIC_CACHE_DIR"] = str(cache)
+        env["FONTCONFIG_FILE"] = str(font_config(work))
+        rendered_dir = draft / "rendered"
+        rendered_dir.mkdir()
+        run_command(
+            [str(tectonic), "template.tex", "--only-cached", "--untrusted",
+             "--outdir", str(rendered_dir)],
+            cwd=draft, timeout=90, env=env,
+        )
+        rendered = rendered_dir / "template.pdf"
+        if not rendered.is_file():
+            raise ConversionError("rendered_pdf_missing", "render")
+        with pymupdf.open(reference) as original, pymupdf.open(rendered) as candidate:
+            reference_tokens = collections.Counter(re.findall(
+                r"[a-z0-9]+", " ".join(page.get_text() for page in original).lower()))
+            candidate_tokens = collections.Counter(re.findall(
+                r"[a-z0-9]+", " ".join(page.get_text() for page in candidate).lower()))
+            coverage = sum((reference_tokens & candidate_tokens).values()) / max(
+                1, sum(reference_tokens.values()))
+            if not candidate_tokens or coverage < 0.90:
+                raise ConversionError("editable_text_coverage_low", "compare")
+            report = {
+                "status": "reflowing_word_draft_requires_human_review",
+                "source_pages": len(original),
+                "preview_pages": len(candidate),
+                "text_coverage": round(coverage, 3),
+                "visual_fidelity_verified": False,
+                "warnings": word_report["warnings"],
+            }
+        with output.open("xb") as stream, zipfile.ZipFile(
+            stream, "w", compression=zipfile.ZIP_DEFLATED
+        ) as archive:
+            archive.write(draft / "template.tex", "template.tex")
+            archive.write(rendered, "preview.pdf")
+            for path in sorted(media.iterdir()):
+                archive.write(path, f"media/{path.name}")
+            archive.writestr("conversion-report.json", json.dumps(report, indent=2))
+            archive.writestr(
+                "README.txt",
+                "Reflowing Word-to-LaTeX draft. Text coverage passed, but appearance "
+                "was not verified. Compare every page with the source before use.\n",
+            )
+        with zipfile.ZipFile(output) as archive:
+            if archive.testzip() is not None:
+                raise ConversionError("corrupt_output", "package")
+        report["output_sha256"] = hashlib.sha256(output.read_bytes()).hexdigest()
+        return report
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True, type=Path)
@@ -298,8 +386,19 @@ def main() -> None:
         report = build(args.source, args.output, args.soffice, args.tectonic,
                        include_editable_draft=args.include_editable_draft)
     except ConversionError as error:
-        print(json.dumps({"ok": False, "code": error.code, "stage": error.stage}))
-        raise SystemExit(2)
+        if args.include_editable_draft and error.code in {
+            "too_many_pages", "unsupported_layout", "ocr_required", "fidelity_check_failed"
+        } and args.source.suffix.lower() in {".doc", ".docx"}:
+            try:
+                report = build_editable_fallback(
+                    args.source, args.output, args.soffice, args.tectonic)
+            except ConversionError as fallback_error:
+                print(json.dumps({"ok": False, "code": fallback_error.code,
+                                  "stage": fallback_error.stage}))
+                raise SystemExit(2)
+        else:
+            print(json.dumps({"ok": False, "code": error.code, "stage": error.stage}))
+            raise SystemExit(2)
     print(json.dumps({"ok": True, **report}))
 
 
