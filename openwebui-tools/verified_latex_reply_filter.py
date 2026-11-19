@@ -76,6 +76,49 @@ def _source_tool_result(sources):
 
 
 class Filter:
+    async def stream(self, event: dict, __metadata__: dict = None) -> dict:
+        """Show the verified legacy Tool result instead of model draft tokens.
+
+        The legacy Tool executes before model generation and its result is in
+        request metadata. Keep completion, usage, error, and file events intact.
+        """
+        if not isinstance(event, dict) or not isinstance(__metadata__, dict):
+            return event
+        result = _source_tool_result(__metadata__.get("sources"))
+        if result is None:
+            return event
+
+        choices = event.get("choices")
+        if isinstance(choices, list):
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                delta = choice.get("delta")
+                if isinstance(delta, dict) and isinstance(delta.get("content"), str) and delta["content"]:
+                    if not __metadata__.get("_verified_latex_stream_sent"):
+                        delta["content"] = result
+                        __metadata__["_verified_latex_stream_sent"] = True
+                    else:
+                        delta["content"] = ""
+            return event
+
+        kind = event.get("type")
+        if kind == "response.output_text.delta" and isinstance(event.get("delta"), str):
+            if not __metadata__.get("_verified_latex_stream_sent"):
+                event["delta"] = result
+                __metadata__["_verified_latex_stream_sent"] = True
+            else:
+                event["delta"] = ""
+        elif kind == "response.output_text.done" and isinstance(event.get("text"), str):
+            event["text"] = result
+        elif kind == "response.output_item.done":
+            item = event.get("item")
+            if isinstance(item, dict) and item.get("type") == "message":
+                for part in item.get("content", []):
+                    if isinstance(part, dict) and part.get("type") == "output_text":
+                        part["text"] = result
+        return event
+
     async def outlet(self, body: dict) -> dict:
         messages = body.get("messages") if isinstance(body, dict) else None
         if not isinstance(messages, list) or not messages:

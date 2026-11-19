@@ -71,6 +71,33 @@ class VerifiedLatexReplyFilterTests(unittest.TestCase):
         self.assertEqual(asyncio.run(filter_module.Filter().outlet(body))["messages"][-1]["content"],
                          "Normal answer")
 
+    def test_stream_shows_verified_tool_result_without_model_draft(self):
+        verified = "Fixed-layout LaTeX draft created: verified download"
+        metadata = {"sources": [{"source": {"name": "tool/convert_attached_document_to_latex"},
+                                 "document": [verified], "tool_result": True}]}
+        guard = filter_module.Filter()
+        first = {"choices": [{"delta": {"content": "Unverified LaTeX"}}]}
+        second = {"choices": [{"delta": {"content": "\\begin{document}"},
+                               "finish_reason": "stop"}]}
+        result_first = asyncio.run(guard.stream(first, metadata))
+        result_second = asyncio.run(guard.stream(second, metadata))
+        self.assertEqual(result_first["choices"][0]["delta"]["content"], verified)
+        self.assertEqual(result_second["choices"][0]["delta"]["content"], "")
+        self.assertEqual(result_second["choices"][0]["finish_reason"], "stop")
+        ordinary = {"choices": [{"delta": {"content": "Ordinary answer"}}]}
+        self.assertEqual(asyncio.run(guard.stream(ordinary, {"sources": []})), ordinary)
+
+    def test_responses_stream_replaces_completed_message_text(self):
+        verified = "Fixed-layout LaTeX draft created: verified download"
+        metadata = {"sources": [{"source": {"name": "tool/convert_attached_document_to_latex"},
+                                 "document": [verified], "tool_result": True}]}
+        guard = filter_module.Filter()
+        delta = {"type": "response.output_text.delta", "delta": "Invented LaTeX"}
+        done = {"type": "response.output_item.done", "item": {"type": "message",
+                "content": [{"type": "output_text", "text": "Invented LaTeX"}]}}
+        self.assertEqual(asyncio.run(guard.stream(delta, metadata))["delta"], verified)
+        self.assertEqual(asyncio.run(guard.stream(done, metadata))["item"]["content"][0]["text"], verified)
+
 
 if __name__ == "__main__":
     unittest.main()
