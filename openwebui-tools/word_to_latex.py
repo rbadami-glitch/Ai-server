@@ -18,6 +18,7 @@ from pathlib import Path
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+V = "{urn:schemas-microsoft-com:vml}"
 P = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 SPECIAL = {"\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "$": r"\$",
            "#": r"\#", "_": r"\_", "{": r"\{", "}": r"\}",
@@ -79,8 +80,8 @@ class Draft:
                 result[item.get("Id")] = resolved
         return result
 
-    def image(self, blip, rels):
-        target = rels.get(blip.get(R + "embed"))
+    def image(self, relationship_id, rels, width=None):
+        target = rels.get(relationship_id)
         if not target:
             self.warnings.add("An image relationship could not be resolved.")
             return ""
@@ -90,7 +91,8 @@ class Draft:
             return ""
         name = f"media/image-{len(self.media) + 1}{extension}"
         self.media[name] = self.package.read(target)
-        return r"\includegraphics[width=0.8\linewidth]{" + name + "}"
+        size = width or r"0.8\linewidth"
+        return r"\includegraphics[width=" + size + "]{" + name + "}"
 
     def paragraph(self, node, rels):
         parts = []
@@ -111,8 +113,14 @@ class Draft:
             if value:
                 parts.append(value)
             for blip in run.iter(A + "blip"):
-                if image := self.image(blip, rels):
+                if image := self.image(blip.get(R + "embed"), rels):
                     parts.append(image)
+            for shape in run.iter(V + "shape"):
+                dimensions = re.search(r"(?:^|;)\s*width:\s*([0-9.]+)pt", shape.get("style", ""))
+                width = f"{dimensions.group(1)}pt" if dimensions else None
+                for legacy_image in shape.iter(V + "imagedata"):
+                    if image := self.image(legacy_image.get(R + "id"), rels, width):
+                        parts.append(image)
         content = "".join(parts).strip()
         if not content:
             return ""
@@ -199,6 +207,9 @@ class Draft:
             footer = self.part_text(footers[0]) if footers else ""
             if self.media:
                 self.warnings.add("Embedded images were copied; OCR was not performed.")
+            source_media = [name for name in self.names if name.startswith("word/media/")]
+            if len(self.media) < len(source_media):
+                self.warnings.add("Some embedded media were not included in the draft.")
             preamble = [r"\documentclass{article}", r"\usepackage[T1]{fontenc}",
                         r"\usepackage[utf8]{inputenc}", r"\usepackage{geometry}",
                         r"\usepackage{graphicx}", r"\usepackage{longtable}",
@@ -212,7 +223,8 @@ class Draft:
                 preamble.append(r"\fancyfoot[C]{\parbox{\textwidth}{" + footer + "}}")
             tex = "\n".join(preamble + [r"\begin{document}", "\n\n".join(blocks), r"\end{document}", ""])
             report = {"status": "draft_requires_visual_review", "body_blocks": len(blocks),
-                      "media_files": len(self.media), "section_count": len(sections),
+                      "media_files": len(self.media), "source_media_files": len(source_media),
+                      "section_count": len(sections),
                       "warnings": sorted(self.warnings)}
             output = io.BytesIO()
             with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:

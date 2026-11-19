@@ -8,7 +8,8 @@ Status: recorded on 2026-11-19. This is a plan, not a deployed fix. Keep custome
 - Open WebUI displayed `Retrieved 1 source`. The model produced LaTeX text in chat, but the user reported an unformatted template.
 - In a follow-up, the model explicitly said it only had extracted text and could not see the original document or rendered pages. This is consistent with Open WebUI 0.13.4 routing `.doc` files through `UnstructuredLoader` and using extracted content for RAG.
 - The earlier offline spaCy fix restored *text extraction* for legacy `.doc` files. It did not add access to original page layout, images, named styles, or file conversion.
-- The actual customer document has not been inspected here. Whether it contains scanned images, and how accurately its layout can be reproduced, remain unverified.
+- The customer document was inspected privately on 2026-11-19. The LibreOffice PDF has selectable text and preserves visual structures that text retrieval does not expose. OCR is not needed for its selectable text; whether embedded images contain text requiring OCR remains unverified. The document and derivatives remain outside this public repository.
+- The first LaTeX draft omitted the image because the converted DOCX uses legacy VML image markup. The converter now copies that image in a local private check, but it still omits important styling, colors, section-specific headers, and precise pagination. The draft has not passed a rendered-page comparison and is not a client-ready template.
 
 ## Work now: document conversion and visual input
 
