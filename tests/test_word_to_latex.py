@@ -66,6 +66,42 @@ class WordDraftHeaderTests(unittest.TestCase):
         self.assertIn("Running header content is flattened and needs visual review.",
                       report["warnings"])
 
+    def test_header_table_keeps_cells_and_places_picture_beside_text(self):
+        namespace = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+        document = (f'<w:document xmlns:w="{namespace}"><w:body>'
+                    '<w:p><w:r><w:t>Body</w:t></w:r></w:p>'
+                    '<w:sectPr/></w:body></w:document>')
+        header = (
+            f'<w:hdr xmlns:w="{namespace}" '
+            'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            '<w:tbl><w:tblGrid><w:gridCol w:w="6000"/><w:gridCol w:w="3000"/></w:tblGrid>'
+            '<w:tr><w:tc><w:p><w:r><w:drawing><a:blip r:embed="rId1"/></w:drawing>'
+            '<w:t>Organization</w:t></w:r></w:p>'
+            '<w:p><w:r><w:t>Address</w:t></w:r></w:p></w:tc>'
+            '<w:tc><w:p><w:r><w:t>Sheet </w:t></w:r></w:p></w:tc></w:tr>'
+            '</w:tbl></w:hdr>'
+        )
+        relations = (
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Target="media/logo.png"/></Relationships>'
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "synthetic-table.docx"
+            with zipfile.ZipFile(source, "w") as archive:
+                archive.writestr("word/document.xml", document)
+                archive.writestr("word/header1.xml", header)
+                archive.writestr("word/_rels/header1.xml.rels", relations)
+                archive.writestr("word/media/logo.png", b"synthetic-image")
+            data, report = Draft(source).build()
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            tex = archive.read("template.tex").decode("utf-8")
+        self.assertIn(r"\begin{tabular}{|p{", tex)
+        self.assertIn(r"\begin{minipage}[c]{0.53\linewidth}", tex)
+        self.assertIn("Organization", tex)
+        self.assertIn("Address", tex)
+        self.assertIn("Running header table structure needs visual review.", report["warnings"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -211,6 +211,72 @@ class Draft:
         return " ".join(filter(None, (self.paragraph(p, rels, running_part=True)
                                       for p in self.xml(part).iter(W + "p"))))
 
+    def running_table(self, node, rels):
+        rows = list(node.findall(W + "tr"))
+        grid = node.find(W + "tblGrid")
+        raw_widths = [int(attr(column, "w") or 0) for column in grid] if grid is not None else []
+        count = len(raw_widths) or max((len(row.findall(W + "tc")) for row in rows), default=0)
+        if not count:
+            return ""
+        widths = raw_widths if len(raw_widths) == count and all(raw_widths) else [1] * count
+        total = sum(widths)
+        fractions = [0.88 * width / total for width in widths]
+        columns = "|" + "|".join(f"p{{{fraction:.4f}\\textwidth}}" for fraction in fractions) + "|"
+        lines = [r"\begin{tabular}{" + columns + "}", r"\hline"]
+        for row in rows:
+            cells = []
+            used = 0
+            for cell in row.findall(W + "tc"):
+                if used >= count:
+                    self.warnings.add("A running header table has more cells than its grid.")
+                    break
+                props = cell.find(W + "tcPr")
+                raw_span = attr(props.find(W + "gridSpan"), "val") if props is not None else None
+                span = max(1, min(count - used, int(raw_span))) if raw_span and raw_span.isdigit() else 1
+                paragraphs = list(filter(None, (
+                    self.paragraph(p, rels, running_part=True) for p in cell.findall(W + "p")
+                )))
+                if (len(paragraphs) > 1 and r"\includegraphics" in paragraphs[0]
+                        and all(r"\includegraphics" not in p for p in paragraphs[1:])):
+                    match = re.search(r"\\includegraphics\[width=[^]]+\]\{[^}]+\}", paragraphs[0])
+                    picture = paragraphs[0][:match.end()] if match else paragraphs[0]
+                    picture = re.sub(r"\\includegraphics\[width=[^]]+\]",
+                                     lambda _: r"\includegraphics[width=0.95\linewidth]",
+                                     picture)
+                    following = ([paragraphs[0][match.end():].strip()] if match else [])
+                    following.extend(paragraphs[1:])
+                    content = (r"\begin{minipage}[c]{0.53\linewidth}" + picture +
+                               r"\end{minipage}\hfill " +
+                               r"\begin{minipage}[c]{0.43\linewidth}" +
+                               r"\newline ".join(filter(None, following)) + r"\end{minipage}")
+                else:
+                    content = r"\newline ".join(paragraphs) or "~"
+                if span > 1:
+                    fraction = sum(fractions[used:used + span])
+                    content = (r"\multicolumn{" + str(span) + r"}{|p{" +
+                               f"{fraction:.4f}" + r"\textwidth}|}{" + content + "}")
+                cells.append(content)
+                used += span
+            cells.extend(["~"] * max(0, count - used))
+            lines.append(" & ".join(cells) + r" \\ \hline")
+        return "\n".join(lines + [r"\end{tabular}"])
+
+    def running_header(self, part):
+        rels = self.relationships(part)
+        blocks = []
+        for child in self.xml(part):
+            if child.tag == W + "tbl":
+                value = self.running_table(child, rels)
+            elif child.tag == W + "p":
+                value = self.paragraph(child, rels, running_part=True)
+            else:
+                continue
+            if value:
+                blocks.append(value)
+        if any(r"\begin{tabular}" in block for block in blocks):
+            self.warnings.add("Running header table structure needs visual review.")
+        return " ".join(blocks)
+
     def build(self):
         try:
             body = self.document.find(W + "body")
@@ -238,7 +304,7 @@ class Draft:
             footers = sorted(n for n in self.names if re.fullmatch(r"word/footer\d+\.xml", n))
             if len(headers) > 1 or len(footers) > 1:
                 self.warnings.add("Multiple headers or footers need per-page visual review.")
-            header = self.part_text(headers[0]) if headers else ""
+            header = self.running_header(headers[0]) if headers else ""
             footer = self.part_text(footers[0]) if footers else ""
             if self.media:
                 self.warnings.add("Embedded images were copied; OCR was not performed.")
@@ -253,11 +319,15 @@ class Draft:
                 preamble.append(r"\geometry{" + layout + "}")
             preamble.extend([r"\pagestyle{fancy}", r"\fancyhf{}"])
             if header:
-                header_height = "1.6in" if r"\includegraphics" in header else "0.9in"
+                header_height = ("2.0in" if r"\includegraphics" in header and
+                                 r"\begin{tabular}" in header else
+                                 "1.6in" if r"\includegraphics" in header else "0.9in")
                 preamble.extend([
                     r"\setlength{\headheight}{" + header_height + "}",
                     r"\geometry{top=\dimexpr\headheight+0.35in\relax,headsep=0.1in}",
-                    r"\fancyhead[L]{\parbox{\textwidth}{\small " + header + "}}",
+                    r"\fancyhead[L]{\parbox{\textwidth}{" +
+                    (r"\normalsize " if r"\begin{tabular}" in header else r"\small ") +
+                    header + "}}",
                 ])
                 self.warnings.add("Running header content is flattened and needs visual review.")
             if footer:
