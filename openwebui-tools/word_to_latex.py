@@ -1,7 +1,7 @@
-"""Draft a self-contained LaTeX ZIP from a DOCX without claiming visual fidelity.
+"""Draft a LaTeX ZIP from DOCX with Python's standard library only.
 
-Run only with private input and output paths outside the public Git checkout.
-The caller must render the TeX and compare it with the source PDF before use.
+This is an offline prototype. Keep inputs and outputs outside the public Git
+checkout. A rendered-page comparison with the source PDF is required before use.
 """
 
 from __future__ import annotations
@@ -9,16 +9,16 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import posixpath
+import re
+import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
-from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml.ns import qn
-from docx.table import Table
-from docx.text.paragraph import Paragraph
-
-
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+P = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 SPECIAL = {"\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "$": r"\$",
            "#": r"\#", "_": r"\_", "{": r"\{", "}": r"\}",
            "~": r"\textasciitilde{}", "^": r"\textasciicircum{}"}
@@ -28,145 +28,204 @@ def escape(text: str) -> str:
     return "".join(SPECIAL.get(char, char) for char in text)
 
 
-def inches(length) -> float | None:
-    return round(length.inches, 3) if length is not None else None
+def attr(node, name):
+    return node.get(W + name) if node is not None else None
 
 
 class Draft:
     def __init__(self, source: Path):
-        self.doc = Document(source)
+        if not source.is_file() or not zipfile.is_zipfile(source):
+            raise ValueError("Expected an existing DOCX ZIP package")
+        self.package = zipfile.ZipFile(source)
+        self.names = set(self.package.namelist())
+        if "word/document.xml" not in self.names:
+            self.package.close()
+            raise ValueError("DOCX has no word/document.xml")
+        self.document = self.xml("word/document.xml")
+        self.styles = self.style_names()
         self.media: dict[str, bytes] = {}
-        self.warnings: set[str] = set()
-        self.image_number = 0
+        self.warnings: set[str] = {
+            "Named styles, fonts, colors, borders, and precise spacing are not fully mapped."
+        }
 
-    def image_tex(self, run, part) -> str:
-        rendered = []
-        for blip in run._r.xpath(".//a:blip"):
-            relationship = blip.get(qn("r:embed"))
-            if not relationship or relationship not in part.related_parts:
-                self.warnings.add("An image could not be resolved from its relationship.")
-                continue
-            image = part.related_parts[relationship]
-            extension = Path(image.partname).suffix.lower()
-            if extension not in {".png", ".jpg", ".jpeg", ".pdf"}:
-                self.warnings.add("An image format needs manual conversion before LaTeX compilation.")
-                continue
-            self.image_number += 1
-            name = f"media/image-{self.image_number}{extension}"
-            self.media[name] = image.blob
-            rendered.append(r"\includegraphics[width=0.8\linewidth]{" + name + "}")
-        return " ".join(rendered)
+    def xml(self, name):
+        return ET.fromstring(self.package.read(name))
 
-    def paragraph(self, paragraph: Paragraph) -> str:
-        pieces = []
-        for run in paragraph.runs:
-            value = escape(run.text).replace("\n", r"\\" + "\n")
-            if value:
-                if run.bold:
+    def style_names(self):
+        names = {}
+        if "word/styles.xml" in self.names:
+            for style in self.xml("word/styles.xml").iter(W + "style"):
+                style_id = attr(style, "styleId")
+                name = attr(style.find(W + "name"), "val")
+                if style_id and name:
+                    names[style_id] = name.lower()
+        return names
+
+    def relationships(self, part):
+        directory, filename = posixpath.split(part)
+        rels_name = posixpath.join(directory, "_rels", filename + ".rels")
+        if rels_name not in self.names:
+            return {}
+        result = {}
+        for item in self.xml(rels_name).iter(P + "Relationship"):
+            if item.get("TargetMode") == "External":
+                continue
+            target = item.get("Target", "")
+            if not target:
+                continue
+            resolved = (target.lstrip("/") if target.startswith("/") else
+                        posixpath.normpath(posixpath.join(directory, target)))
+            if resolved in self.names:
+                result[item.get("Id")] = resolved
+        return result
+
+    def image(self, blip, rels):
+        target = rels.get(blip.get(R + "embed"))
+        if not target:
+            self.warnings.add("An image relationship could not be resolved.")
+            return ""
+        extension = posixpath.splitext(target)[1].lower()
+        if extension not in {".png", ".jpg", ".jpeg", ".pdf"}:
+            self.warnings.add("An image format needs manual conversion for LaTeX.")
+            return ""
+        name = f"media/image-{len(self.media) + 1}{extension}"
+        self.media[name] = self.package.read(target)
+        return r"\includegraphics[width=0.8\linewidth]{" + name + "}"
+
+    def paragraph(self, node, rels):
+        parts = []
+        for run in node.iter(W + "r"):
+            value = "".join(escape(item.text or "") for item in run.iter(W + "t"))
+            if run.find(W + "tab") is not None:
+                value += " "
+            if run.find(W + "br") is not None:
+                value += r"\\"
+            props = run.find(W + "rPr")
+            if value and props is not None:
+                if props.find(W + "b") is not None:
                     value = r"\textbf{" + value + "}"
-                if run.italic:
+                if props.find(W + "i") is not None:
                     value = r"\textit{" + value + "}"
-                if run.underline:
+                if props.find(W + "u") is not None:
                     value = r"\underline{" + value + "}"
-                pieces.append(value)
-            image = self.image_tex(run, paragraph.part)
-            if image:
-                pieces.append(image)
-        content = "".join(pieces).strip()
+            if value:
+                parts.append(value)
+            for blip in run.iter(A + "blip"):
+                if image := self.image(blip, rels):
+                    parts.append(image)
+        content = "".join(parts).strip()
         if not content:
             return ""
-        style = paragraph.style.name.lower() if paragraph.style else ""
-        if style.startswith("heading 1"):
+        props = node.find(W + "pPr")
+        style_id = attr(props.find(W + "pStyle"), "val") if props is not None else None
+        style = self.styles.get(style_id, (style_id or "").lower())
+        if re.match(r"heading\s*1", style):
             return r"\section*{" + content + "}"
-        if style.startswith("heading 2"):
+        if re.match(r"heading\s*2", style):
             return r"\subsection*{" + content + "}"
-        if style.startswith("heading 3"):
+        if re.match(r"heading\s*3", style):
             return r"\subsubsection*{" + content + "}"
         if "title" in style:
             return r"\begin{center}\Large\bfseries " + content + r"\end{center}"
-        if style.startswith("list"):
-            self.warnings.add("List numbering and indentation need visual review.")
-        alignment = paragraph.alignment
-        if alignment == WD_ALIGN_PARAGRAPH.CENTER:
+        alignment = attr(props.find(W + "jc"), "val") if props is not None else None
+        if alignment == "center":
             return r"\begin{center}" + content + r"\end{center}"
-        if alignment == WD_ALIGN_PARAGRAPH.RIGHT:
+        if alignment == "right":
             return r"\begin{flushright}" + content + r"\end{flushright}"
-        return content + "\n"
+        if props is not None and props.find(W + "numPr") is not None:
+            self.warnings.add("List numbering and indentation need visual review.")
+        return content
 
-    def table(self, table: Table) -> str:
-        rows = table.rows
-        if not rows:
-            return ""
-        count = max(len(row.cells) for row in rows)
-        if count == 0:
+    def table(self, node, rels):
+        rows = list(node.findall(W + "tr"))
+        count = max((len(row.findall(W + "tc")) for row in rows), default=0)
+        if not count:
             return ""
         self.warnings.add("Table widths, merged cells, borders, and page breaks need visual review.")
-        width = round(0.92 / count, 4)
-        columns = "|" + "|".join(f"p{{{width}\\linewidth}}" for _ in range(count)) + "|"
+        width = 0.92 / count
+        columns = "|" + "|".join(f"p{{{width:.4f}\\linewidth}}" for _ in range(count)) + "|"
         lines = [r"\begin{longtable}{" + columns + "}", r"\hline"]
         for row in rows:
             cells = []
-            for cell in row.cells:
-                value = " ".join(self.paragraph(p).strip() for p in cell.paragraphs)
-                cells.append(value or "~")
+            for cell in row.findall(W + "tc"):
+                text = " ".join(filter(None, (self.paragraph(p, rels) for p in cell.findall(W + "p"))))
+                cells.append(text or "~")
             cells.extend(["~"] * (count - len(cells)))
             lines.append(" & ".join(cells) + r" \\ \hline")
-        lines.append(r"\end{longtable}")
-        return "\n".join(lines)
+        return "\n".join(lines + [r"\end{longtable}"])
 
-    def build(self) -> tuple[bytes, dict]:
-        self.warnings.add("Named Word styles, fonts, colors, and precise spacing are not fully mapped.")
-        sections = self.doc.sections
-        if len(sections) > 1:
-            self.warnings.add("Multiple Word sections are represented with the first section's page geometry only.")
-        section = sections[0]
-        geometry = []
-        for name, length in (("paperwidth", section.page_width), ("paperheight", section.page_height),
-                             ("left", section.left_margin), ("right", section.right_margin),
-                             ("top", section.top_margin), ("bottom", section.bottom_margin)):
-            if (value := inches(length)) is not None:
-                geometry.append(f"{name}={value}in")
-        header = " ".join(self.paragraph(p).strip() for p in section.header.paragraphs)
-        footer = " ".join(self.paragraph(p).strip() for p in section.footer.paragraphs)
-        if section.different_first_page_header_footer or self.doc.settings.odd_and_even_pages_header_footer:
-            self.warnings.add("First-page or odd/even header variants need visual review.")
-        body = []
-        for element in self.doc.element.body.iterchildren():
-            if element.tag == qn("w:p"):
-                value = self.paragraph(Paragraph(element, self.doc))
-            elif element.tag == qn("w:tbl"):
-                value = self.table(Table(element, self.doc))
-            else:
-                continue
-            if value:
-                body.append(value)
-        if not body:
-            raise ValueError("No printable body content found")
-        if self.media:
-            self.warnings.add("Embedded images were copied, but OCR was not performed on them.")
-        preamble = [r"\documentclass{article}", r"\usepackage[T1]{fontenc}",
-                    r"\usepackage[utf8]{inputenc}", r"\usepackage{geometry}",
-                    r"\usepackage{graphicx}", r"\usepackage{longtable}",
-                    r"\usepackage{fancyhdr}", r"\geometry{" + ",".join(geometry) + "}",
-                    r"\pagestyle{fancy}", r"\fancyhf{}"]
-        if header:
-            preamble.append(r"\fancyhead[L]{\parbox{\textwidth}{" + header + "}}")
-        if footer:
-            preamble.append(r"\fancyfoot[C]{\parbox{\textwidth}{" + footer + "}}")
-        tex = "\n".join(preamble + [r"\begin{document}", "\n\n".join(body), r"\end{document}", ""])
-        report = {"status": "draft_requires_visual_review", "body_blocks": len(body),
-                  "media_files": len(self.media), "section_count": len(sections),
-                  "warnings": sorted(self.warnings)}
-        output = io.BytesIO()
-        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("template.tex", tex)
-            archive.writestr("conversion-report.json", json.dumps(report, indent=2))
-            for name, blob in self.media.items():
-                archive.writestr(name, blob)
-        return output.getvalue(), report
+    def geometry(self, section):
+        values = []
+        for child, pairs in (("pgSz", (("w", "paperwidth"), ("h", "paperheight"))),
+                             ("pgMar", (("left", "left"), ("right", "right"),
+                                        ("top", "top"), ("bottom", "bottom")))):
+            item = section.find(W + child) if section is not None else None
+            for source, target in pairs:
+                raw = attr(item, source)
+                if raw and raw.lstrip("-").isdigit():
+                    values.append(f"{target}={int(raw) / 1440:.3f}in")
+        return ",".join(values)
+
+    def part_text(self, part):
+        rels = self.relationships(part)
+        return " ".join(filter(None, (self.paragraph(p, rels) for p in self.xml(part).iter(W + "p"))))
+
+    def build(self):
+        try:
+            body = self.document.find(W + "body")
+            if body is None:
+                raise ValueError("DOCX has no body")
+            sections = list(self.document.iter(W + "sectPr"))
+            if len(sections) > 1:
+                self.warnings.add("Multiple Word sections use the first page geometry only.")
+            rels = self.relationships("word/document.xml")
+            blocks = []
+            for child in body:
+                if child.tag == W + "p":
+                    value = self.paragraph(child, rels)
+                elif child.tag == W + "tbl":
+                    value = self.table(child, rels)
+                else:
+                    continue
+                if value:
+                    blocks.append(value)
+            if not blocks:
+                raise ValueError("No printable body content found")
+            headers = sorted(n for n in self.names if re.fullmatch(r"word/header\d+\.xml", n))
+            footers = sorted(n for n in self.names if re.fullmatch(r"word/footer\d+\.xml", n))
+            if len(headers) > 1 or len(footers) > 1:
+                self.warnings.add("Multiple headers or footers need per-page visual review.")
+            header = self.part_text(headers[0]) if headers else ""
+            footer = self.part_text(footers[0]) if footers else ""
+            if self.media:
+                self.warnings.add("Embedded images were copied; OCR was not performed.")
+            preamble = [r"\documentclass{article}", r"\usepackage[T1]{fontenc}",
+                        r"\usepackage[utf8]{inputenc}", r"\usepackage{geometry}",
+                        r"\usepackage{graphicx}", r"\usepackage{longtable}",
+                        r"\usepackage{fancyhdr}"]
+            if sections and (layout := self.geometry(sections[0])):
+                preamble.append(r"\geometry{" + layout + "}")
+            preamble.extend([r"\pagestyle{fancy}", r"\fancyhf{}"])
+            if header:
+                preamble.append(r"\fancyhead[L]{\parbox{\textwidth}{" + header + "}}")
+            if footer:
+                preamble.append(r"\fancyfoot[C]{\parbox{\textwidth}{" + footer + "}}")
+            tex = "\n".join(preamble + [r"\begin{document}", "\n\n".join(blocks), r"\end{document}", ""])
+            report = {"status": "draft_requires_visual_review", "body_blocks": len(blocks),
+                      "media_files": len(self.media), "section_count": len(sections),
+                      "warnings": sorted(self.warnings)}
+            output = io.BytesIO()
+            with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("template.tex", tex)
+                archive.writestr("conversion-report.json", json.dumps(report, indent=2))
+                for name, blob in self.media.items():
+                    archive.writestr(name, blob)
+            return output.getvalue(), report
+        finally:
+            self.package.close()
 
 
-def main() -> None:
+def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--docx", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
@@ -174,10 +233,8 @@ def main() -> None:
     repo = Path(__file__).resolve().parent.parent
     if args.output.resolve().is_relative_to(repo):
         parser.error("Keep converted documents outside the public Git checkout")
-    if args.output.exists() or not args.output.parent.is_dir():
+    if args.output.exists() or not args.output.parent.is_dir() or args.output.suffix.lower() != ".zip":
         parser.error("Output must be a new ZIP path in an existing private directory")
-    if args.output.suffix.lower() != ".zip":
-        parser.error("Output must end in .zip")
     data, report = Draft(args.docx).build()
     with args.output.open("xb") as stream:
         stream.write(data)
