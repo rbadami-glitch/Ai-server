@@ -1,6 +1,6 @@
 # Document fidelity and Open WebUI eval backlog
 
-Status: recorded on 2026-11-19. This is a plan, not a deployed fix. Keep customer documents, extracted text, screenshots, chat exports, reports, and credentials off this public repository.
+Status: recorded on 2026-11-19. A local, opt-in fixed-layout conversion Tool and isolated offline worker are implemented but have not been enabled on the AI server. See [`openwebui-tools/DOCUMENT_TO_LATEX_ROLLOUT.md`](openwebui-tools/DOCUMENT_TO_LATEX_ROLLOUT.md). Keep customer documents, extracted text, screenshots, chat exports, reports, and credentials off this public repository.
 
 ## Observed document issue
 
