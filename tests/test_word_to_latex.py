@@ -25,7 +25,20 @@ class WordDraftHeaderTests(unittest.TestCase):
             '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>'
             '<w:r><w:t>HEADER TITLE</w:t></w:r></w:p>'
             '<w:p><w:r><w:t xml:space="preserve">   header detail   </w:t>'
-            '<w:drawing><a:blip r:embed="rId1"/></w:drawing></w:r></w:p></w:hdr>'
+            '<w:drawing><a:blip r:embed="rId1"/></w:drawing></w:r></w:p>'
+            '<w:p><w:r><w:t>SHEET NO. </w:t></w:r>'
+            '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            '<w:r><w:instrText>PAGE</w:instrText></w:r>'
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            '<w:r><w:t>1</w:t></w:r>'
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+            '<w:r><w:t> OF </w:t></w:r>'
+            '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            '<w:r><w:instrText>NUMPAGES \\* ARABIC</w:instrText></w:r>'
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            '<w:r><w:t>5</w:t></w:r>'
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+            '</w:p></w:hdr>'
         )
         relations = (
             '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
@@ -46,6 +59,9 @@ class WordDraftHeaderTests(unittest.TestCase):
         self.assertIn(r"\geometry{top=\dimexpr\headheight+0.35in\relax", tex)
         self.assertIn(r"\fancyhead[L]{\parbox{\textwidth}{\small HEADER TITLE", tex)
         self.assertNotIn(r"\section*{HEADER TITLE}", tex)
+        self.assertIn(r"\label{owui:lastpage}", tex)
+        self.assertIn(r"SHEET NO. \thepage OF \pageref{owui:lastpage}", tex)
+        self.assertNotIn("SHEET NO. 1 OF 5", tex)
         self.assertIn("Body text", tex)
         self.assertIn("Running header content is flattened and needs visual review.",
                       report["warnings"])

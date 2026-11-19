@@ -45,6 +45,7 @@ class Draft:
         self.document = self.xml("word/document.xml")
         self.styles = self.style_names()
         self.media: dict[str, bytes] = {}
+        self.needs_lastpage = False
         self.warnings: set[str] = {
             "Named styles, fonts, colors, borders, and precise spacing are not fully mapped."
         }
@@ -96,8 +97,32 @@ class Draft:
 
     def paragraph(self, node, rels, *, running_part=False):
         parts = []
+        fields = []
         for run in node.iter(W + "r"):
-            value = "".join(escape(item.text or "") for item in run.iter(W + "t"))
+            value = ""
+            for item in run:
+                if item.tag == W + "fldChar":
+                    kind = attr(item, "fldCharType")
+                    if kind == "begin":
+                        fields.append({"code": "", "replacement": None, "result": False})
+                    elif kind == "separate" and fields:
+                        field = fields[-1]
+                        name = field["code"].strip().split(maxsplit=1)[0].upper() if field["code"].strip() else ""
+                        field["replacement"] = {
+                            "PAGE": r"\thepage", "NUMPAGES": r"\pageref{owui:lastpage}",
+                        }.get(name)
+                        if name == "NUMPAGES":
+                            self.needs_lastpage = True
+                        field["result"] = True
+                        if field["replacement"]:
+                            value += field["replacement"]
+                    elif kind == "end" and fields:
+                        fields.pop()
+                elif item.tag == W + "instrText" and fields:
+                    fields[-1]["code"] += item.text or ""
+                elif item.tag == W + "t":
+                    if not (fields and fields[-1]["result"] and fields[-1]["replacement"]):
+                        value += escape(item.text or "")
             if running_part:
                 value = re.sub(r"\s+", " ", value)
             if run.find(W + "tab") is not None:
@@ -241,7 +266,9 @@ class Draft:
                 "% Editable Word-structure draft. Review the rendered preview before use.",
                 "% Body text below can reflow; edit the running header above separately.",
                 *preamble,
-                r"\begin{document}", "\n\n".join(blocks), r"\end{document}", "",
+                r"\begin{document}", "\n\n".join(blocks),
+                *([r"\label{owui:lastpage}"] if self.needs_lastpage else []),
+                r"\end{document}", "",
             ])
             report = {"status": "draft_requires_visual_review", "body_blocks": len(blocks),
                       "media_files": len(self.media), "source_media_files": len(source_media),
