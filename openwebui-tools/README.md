@@ -1,5 +1,23 @@
 # Word document tool
 
+## Fixed-layout PDF to LaTeX prototype
+
+`pdf_to_latex_layout.py` recreates selectable PDF text, embedded PNG/JPEG images,
+and simple line/rectangle drawings as fixed-position LaTeX elements. It uses
+PyMuPDF to read PDFs and requires XeLaTeX or Tectonic plus Arial to render. Keep
+inputs and outputs outside this public Git checkout. It refuses PDFs with no
+selectable text; scanned text needs OCR first.
+
+Each word is editable in `template.tex`, but longer edits do not reflow and may
+overlap neighboring content. This is a visual copy, not a semantic Word template.
+Compile the draft, compare its PDF with the reference using
+`diagnostics/compare_pdf_layout.py`, and inspect every page. The source script
+has passed one synthetic and one private layout check; it is not installed in
+Open WebUI and should not be enabled there without broader tests and a clear
+user-facing description of the fixed-layout limitation.
+
+## Downloadable Word document tool
+
 `word_document.py` is a narrow Open WebUI Workspace tool for creating a `.docx` from a title and document text. It uses only Python's standard library for document creation. It does not run shell commands or install packages.
 
 The document uses Word paragraph styles for its title, headings, and body text. The tool recognizes Markdown-style `#`/`##` headings, `-` bullets, `1.` numbered items, and `**bold**` spans. It does not support company templates, images, tables, or arbitrary Markdown layout.
