@@ -220,11 +220,19 @@ def build(source: Path, output: Path, soffice: Path, tectonic: Path,
                         reference_tokens = collections.Counter(re.findall(
                             r"[a-z0-9]+",
                             " ".join(page.get_text() for page in reference_preview).lower()))
+                        reference_sizes = [
+                            (round(page.rect.width), round(page.rect.height))
+                            for page in reference_preview
+                        ]
                     rendered_tokens = collections.Counter(re.findall(
                         r"[a-z0-9]+", " ".join(page.get_text() for page in preview).lower()))
                     semantic_report["text_coverage"] = round(
                         sum((reference_tokens & rendered_tokens).values())
                         / max(1, sum(reference_tokens.values())), 3)
+                    semantic_report["page_geometry_match"] = reference_sizes == [
+                        (round(page.rect.width), round(page.rect.height))
+                        for page in preview
+                    ]
                     if semantic_report["text_coverage"] < 0.90:
                         raise ConversionError("semantic_text_coverage_low", "semantic_compare")
                     if len(preview) == result["reference_pages"]:
@@ -337,6 +345,10 @@ def build_editable_fallback(source: Path, output: Path, soffice: Path, tectonic:
         if not rendered.is_file():
             raise ConversionError("rendered_pdf_missing", "render")
         with pymupdf.open(reference) as original, pymupdf.open(rendered) as candidate:
+            source_sizes = [(round(page.rect.width), round(page.rect.height))
+                            for page in original]
+            preview_sizes = [(round(page.rect.width), round(page.rect.height))
+                             for page in candidate]
             reference_tokens = collections.Counter(re.findall(
                 r"[a-z0-9]+", " ".join(page.get_text() for page in original).lower()))
             candidate_tokens = collections.Counter(re.findall(
@@ -351,6 +363,7 @@ def build_editable_fallback(source: Path, output: Path, soffice: Path, tectonic:
                 "preview_pages": len(candidate),
                 "text_coverage": round(coverage, 3),
                 "visual_fidelity_verified": False,
+                "page_geometry_match": source_sizes == preview_sizes,
                 "warnings": word_report["warnings"],
             }
         with output.open("xb") as stream, zipfile.ZipFile(

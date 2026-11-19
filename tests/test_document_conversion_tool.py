@@ -86,12 +86,15 @@ class DocumentConversionToolTests(unittest.TestCase):
 
     def test_reflowing_fallback_requires_coverage_and_explicit_visual_limit(self):
         report = {"status": "reflowing_word_draft_requires_human_review",
-                  "text_coverage": 0.95, "visual_fidelity_verified": False}
+                  "text_coverage": 0.95, "visual_fidelity_verified": False,
+                  "page_geometry_match": False}
         self.assertEqual(report, tool_code._verify_zip(valid_zip(report)))
         with self.assertRaises(ValueError):
             tool_code._verify_zip(valid_zip({**report, "text_coverage": 0.5}))
         with self.assertRaises(ValueError):
             tool_code._verify_zip(valid_zip({**report, "visual_fidelity_verified": True}))
+        with self.assertRaises(ValueError):
+            tool_code._verify_zip(valid_zip({**report, "page_geometry_match": None}))
 
     def test_missing_context_and_configuration_do_not_claim_success(self):
         tool = tool_code.Tools()

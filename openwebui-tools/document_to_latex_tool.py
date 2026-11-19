@@ -50,7 +50,9 @@ def _verify_zip(data: bytes) -> dict:
         }:
             raise ValueError("The worker did not verify the draft")
         if report.get("status") == "reflowing_word_draft_requires_human_review":
-            if report.get("text_coverage", 0) < 0.90 or report.get("visual_fidelity_verified") is not False:
+            if (report.get("text_coverage", 0) < 0.90
+                    or report.get("visual_fidelity_verified") is not False
+                    or not isinstance(report.get("page_geometry_match"), bool)):
                 raise ValueError("The editable draft lacks a valid quality report")
         return report
 
@@ -203,10 +205,15 @@ class Tools:
                     except Exception:
                         pass
                 if report["status"] == "reflowing_word_draft_requires_human_review":
+                    geometry_notice = (
+                        " Page size or orientation changed in the preview."
+                        if not report["page_geometry_match"] else ""
+                    )
                     return (
                         f"Editable LaTeX draft created: [Download {filename}]({url}). "
                         "Open preview.pdf and compare every page with the source. "
                         "Text coverage passed, but the original appearance was not verified."
+                        + geometry_notice
                     )
                 return (
                     f"Fixed-layout LaTeX draft created: [Download {filename}]({url}). "
