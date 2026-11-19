@@ -7,9 +7,12 @@ or a network service. The output is a fixed-layout draft requiring human review.
 from __future__ import annotations
 
 import argparse
+import collections
 import hashlib
+import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -20,6 +23,7 @@ from pathlib import Path
 import pymupdf
 
 from pdf_to_latex_layout import run as draft_from_pdf
+from word_to_latex import Draft as WordDraft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from diagnostics.compare_pdf_layout import compare
@@ -88,6 +92,25 @@ def office_to_pdf(source: Path, soffice: Path, work: Path) -> Path:
     return converted
 
 
+def office_to_docx(source: Path, soffice: Path, work: Path) -> Path:
+    """Convert a legacy Word file to DOCX without touching the original."""
+    input_dir = work / "semantic-input"
+    input_dir.mkdir()
+    local_source = input_dir / "source.doc"
+    shutil.copyfile(source, local_source)
+    profile = (work / "semantic-office-profile").as_uri()
+    run_command(
+        [str(soffice), f"-env:UserInstallation={profile}", "--headless",
+         "--convert-to", "docx:Office Open XML Text", "--outdir", str(input_dir),
+         str(local_source)],
+        cwd=input_dir, timeout=90,
+    )
+    converted = input_dir / "source.docx"
+    if not zipfile.is_zipfile(converted):
+        raise ConversionError("office_docx_missing", "semantic_conversion")
+    return converted
+
+
 def font_config(work: Path) -> Path:
     fonts = Path("C:/Windows/Fonts")
     if not (fonts / "arial.ttf").is_file():
@@ -103,7 +126,8 @@ def font_config(work: Path) -> Path:
     return config
 
 
-def build(source: Path, output: Path, soffice: Path, tectonic: Path) -> dict:
+def build(source: Path, output: Path, soffice: Path, tectonic: Path,
+          *, include_editable_draft: bool = False) -> dict:
     checkout = Path(__file__).resolve().parent.parent
     if source.resolve().is_relative_to(checkout) or output.resolve().is_relative_to(checkout):
         raise ConversionError("private_paths_required", "input")
@@ -155,6 +179,69 @@ def build(source: Path, output: Path, soffice: Path, tectonic: Path) -> dict:
                        for page in result["pages"])):
             raise ConversionError("fidelity_check_failed", "compare")
 
+        semantic_report = {"status": "not_requested"}
+        semantic_dir = None
+        semantic_rendered = None
+        if include_editable_draft and extension in {".doc", ".docx"}:
+            try:
+                semantic_source = source if extension == ".docx" else office_to_docx(source, soffice, work)
+                semantic_dir = work / "semantic"
+                semantic_dir.mkdir()
+                semantic_media = semantic_dir / "editable-media"
+                semantic_media.mkdir()
+                semantic_data, semantic_report = WordDraft(semantic_source).build()
+                with zipfile.ZipFile(io.BytesIO(semantic_data)) as semantic_archive:
+                    editable_source = semantic_archive.read("template.tex").decode("utf-8")
+                    editable_source = editable_source.replace("{media/", "{editable-media/")
+                    (semantic_dir / "editable.tex").write_text(editable_source, encoding="utf-8")
+                    for name in semantic_archive.namelist():
+                        if (name.startswith("media/") and
+                                "/" not in name[len("media/"):] and
+                                "\\" not in name and
+                                ".." not in Path(name).parts):
+                            target = semantic_media / Path(name).name
+                            target.write_bytes(semantic_archive.read(name))
+                semantic_rendered_dir = semantic_dir / "rendered"
+                semantic_rendered_dir.mkdir()
+                run_command(
+                    [str(tectonic), "editable.tex", "--only-cached", "--untrusted",
+                     "--outdir", str(semantic_rendered_dir)],
+                    cwd=semantic_dir, timeout=90, env=env,
+                )
+                semantic_rendered = semantic_rendered_dir / "editable.pdf"
+                if not semantic_rendered.is_file():
+                    raise ConversionError("semantic_pdf_missing", "semantic_render")
+                with pymupdf.open(semantic_rendered) as preview:
+                    if not preview or not any(page.get_text().strip() for page in preview):
+                        raise ConversionError("semantic_pdf_empty", "semantic_render")
+                    semantic_report["preview_pages"] = len(preview)
+                    with pymupdf.open(reference) as reference_preview:
+                        reference_tokens = collections.Counter(re.findall(
+                            r"[a-z0-9]+",
+                            " ".join(page.get_text() for page in reference_preview).lower()))
+                    rendered_tokens = collections.Counter(re.findall(
+                        r"[a-z0-9]+", " ".join(page.get_text() for page in preview).lower()))
+                    semantic_report["text_coverage"] = round(
+                        sum((reference_tokens & rendered_tokens).values())
+                        / max(1, sum(reference_tokens.values())), 3)
+                    if semantic_report["text_coverage"] < 0.90:
+                        raise ConversionError("semantic_text_coverage_low", "semantic_compare")
+                    if len(preview) == result["reference_pages"]:
+                        semantic_layout = compare(reference, semantic_rendered)
+                        semantic_report["minimum_ink_overlap"] = round(
+                            min(page["ink_overlap"] for page in semantic_layout["pages"]), 3)
+                    else:
+                        semantic_report["minimum_ink_overlap"] = None
+                    semantic_report["status"] = "reflowing_draft_requires_human_review"
+            except (ConversionError, ValueError, OSError, zipfile.BadZipFile) as error:
+                semantic_report = {
+                    "status": "unavailable",
+                    "reason": error.code if isinstance(error, ConversionError) else type(error).__name__,
+                }
+                semantic_dir = semantic_rendered = None
+        elif include_editable_draft:
+            semantic_report = {"status": "unavailable", "reason": "PDF has no reliable Word structure"}
+
         report = {
             "status": "fixed_layout_draft_requires_human_review",
             "page_count": draft_report["page_count"],
@@ -163,11 +250,14 @@ def build(source: Path, output: Path, soffice: Path, tectonic: Path) -> dict:
             "required_font_families": draft_report["required_font_families"],
             "minimum_ink_overlap": min(page["ink_overlap"] for page in result["pages"]),
             "text_similarity_per_page": [page["text_similarity"] for page in result["pages"]],
+            "editable_draft": semantic_report,
         }
         readme = (
-            "Fixed-layout LaTeX draft. Open preview.pdf before editing.\n"
-            "Text is editable in template.tex, one word per positioned node. "
-            "Longer edits do not reflow and can overlap.\n"
+            "Open preview.pdf to inspect the visually faithful fixed-layout draft.\n"
+            "template.tex positions each word; longer edits do not reflow and can overlap.\n"
+            "If editable.tex and editable-preview.pdf are present, they are a separate "
+            "reflowing Word-structure draft. Inspect semantic-report.json and compare "
+            "the editable preview with the source before using it.\n"
             "Compile with XeLaTeX or Tectonic with Arial and the font families listed in "
             "conversion-report.json, plus fontspec, TikZ, graphicx, xcolor, and geometry.\n"
             "A visual comparison passed, but this package still requires human review.\n"
@@ -181,6 +271,13 @@ def build(source: Path, output: Path, soffice: Path, tectonic: Path) -> dict:
                         archive.write(path, f"media/{path.name}")
                 archive.writestr("conversion-report.json", json.dumps(report, indent=2))
                 archive.writestr("README.txt", readme)
+                if semantic_dir is not None and semantic_rendered is not None:
+                    archive.write(semantic_dir / "editable.tex", "editable.tex")
+                    archive.write(semantic_rendered, "editable-preview.pdf")
+                    archive.writestr("semantic-report.json", json.dumps(semantic_report, indent=2))
+                    for path in sorted(semantic_media.iterdir()):
+                        if path.is_file():
+                            archive.write(path, f"editable-media/{path.name}")
         with zipfile.ZipFile(output) as archive:
             if archive.testzip() is not None:
                 raise ConversionError("corrupt_output", "package")
@@ -194,9 +291,12 @@ def main() -> None:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--soffice", required=True, type=Path)
     parser.add_argument("--tectonic", required=True, type=Path)
+    parser.add_argument("--include-editable-draft", action="store_true",
+                        help="Experimental Word structure output; not ready for shared-model rollout")
     args = parser.parse_args()
     try:
-        report = build(args.source, args.output, args.soffice, args.tectonic)
+        report = build(args.source, args.output, args.soffice, args.tectonic,
+                       include_editable_draft=args.include_editable_draft)
     except ConversionError as error:
         print(json.dumps({"ok": False, "code": error.code, "stage": error.stage}))
         raise SystemExit(2)

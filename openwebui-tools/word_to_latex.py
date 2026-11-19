@@ -214,8 +214,8 @@ class Draft:
             source_media = [name for name in self.names if name.startswith("word/media/")]
             if len(self.media) < len(source_media):
                 self.warnings.add("Some embedded media were not included in the draft.")
-            preamble = [r"\documentclass{article}", r"\usepackage[T1]{fontenc}",
-                        r"\usepackage[utf8]{inputenc}", r"\usepackage{geometry}",
+            preamble = [r"\documentclass{article}", r"\usepackage{fontspec}",
+                        r"\setmainfont{Arial}", r"\usepackage{geometry}",
                         r"\usepackage{graphicx}", r"\usepackage{longtable}",
                         r"\usepackage{fancyhdr}"]
             if sections and (layout := self.geometry(sections[0])):
