@@ -72,6 +72,77 @@ def _verify_zip(data: bytes) -> dict:
         return report
 
 
+def _download_interceptor_code(files: list[dict]) -> str:
+    """Use Open WebUI's execute event to download verified files in the chat tab.
+
+    Its standard Markdown links and file-modal links always open a new tab. The
+    handler is restricted to the exact files this Tool just stored for the user.
+    """
+    names = {item["id"]: item["name"] for item in files}
+    return r"""
+const names = %s;
+const key = '__verifiedLatexDownloads';
+const state = window[key] || (window[key] = { names: {}, installed: false, timer: null });
+Object.assign(state.names, names);
+if (!state.installed) {
+  state.installed = true;
+  const showStatus = (message, hold = false) => {
+    let notice = document.getElementById('verified-latex-download-status');
+    if (!notice) {
+      notice = document.createElement('div');
+      notice.id = 'verified-latex-download-status';
+      notice.setAttribute('role', 'status');
+      notice.setAttribute('aria-live', 'polite');
+      Object.assign(notice.style, {
+        position: 'fixed', right: '1rem', bottom: '1rem', zIndex: '9999',
+        padding: '0.75rem 1rem', borderRadius: '0.75rem',
+        background: '#1f2937', color: '#ffffff', boxShadow: '0 4px 12px #0004'
+      });
+      document.body.appendChild(notice);
+    }
+    notice.textContent = message;
+    clearTimeout(state.timer);
+    if (!hold) state.timer = setTimeout(() => notice.remove(), 3500);
+  };
+  document.addEventListener('click', async (event) => {
+    if (!(event.target instanceof Element)) return;
+    const link = event.target.closest('a[href]');
+    const card = link ? null : event.target.closest('button');
+    const cardEntry = card ? Object.entries(state.names).find(([, name]) =>
+      card.textContent?.includes(name)) : null;
+    if (!link && !cardEntry) return;
+    const url = new URL(link ? link.href :
+      `/api/v1/files/${cardEntry[0]}/content?attachment=true`, window.location.href);
+    const match = url.pathname.match(/^\/api\/v1\/files\/([0-9a-f-]{36})\/content$/i);
+    if (!match || url.origin !== window.location.origin || !state.names[match[1]]) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    showStatus(`Downloading ${state.names[match[1]]}…`, true);
+    try {
+      const token = window.localStorage.getItem('token');
+      const response = await fetch(url.href, {
+        credentials: 'same-origin',
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      if (!response.ok) throw new Error(`Download failed (${response.status})`);
+      const objectUrl = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = state.names[match[1]];
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+      showStatus(`Download started: ${state.names[match[1]]}`);
+    } catch (error) {
+      console.error('LaTeX download failed', error);
+      showStatus('Download failed. Please try again.');
+    }
+  }, true);
+}
+""" % json.dumps(names)
+
+
 class Tools:
     class Valves(BaseModel):
         worker_python: str = Field(default="", description="Absolute Python executable in an isolated conversion environment")
@@ -237,6 +308,11 @@ class Tools:
                 except Exception:
                     preview_url = None
                 if __event_emitter__ is not None:
+                    try:
+                        await __event_emitter__({"type": "execute", "data": {
+                            "code": _download_interceptor_code(files)}})
+                    except Exception:
+                        pass
                     try:
                         await __event_emitter__({"type": "files", "data": {"files": files}})
                     except Exception:

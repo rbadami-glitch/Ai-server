@@ -141,6 +141,10 @@ class DocumentConversionToolTests(unittest.TestCase):
             saved = types.SimpleNamespace(id=saved_id, user_id="user", path="saved-key")
             saved_preview = types.SimpleNamespace(id=preview_id, user_id="user", path="preview-key")
             calls = {"worker": 0, "upload": 0}
+            events = []
+
+            async def collect_event(event):
+                events.append(event)
             owner_allowed = True
             preview_fails = False
 
@@ -207,6 +211,7 @@ class DocumentConversionToolTests(unittest.TestCase):
             with patch.dict(sys.modules, fake_modules), patch.object(tool_code.subprocess, "run", fake_run):
                 kwargs = {"__request__": object(), "__user__": {"id": "user"},
                           "__files__": [],
+                          "__event_emitter__": collect_event,
                           "__metadata__": {"files": [{"id": selected, "type": "file"}]}}
                 wrong = asyncio.run(tool.convert_attached_document_to_latex(
                     file_id=str(uuid.uuid4()), **kwargs
@@ -227,6 +232,13 @@ class DocumentConversionToolTests(unittest.TestCase):
                 self.assertIn("project ZIP", completed)
                 self.assertEqual(1, calls["worker"])
                 self.assertEqual(2, calls["upload"])
+                self.assertEqual(["execute", "files"], [e["type"] for e in events])
+                self.assertIn(saved_id, events[0]["data"]["code"])
+                self.assertIn(preview_id, events[0]["data"]["code"])
+                self.assertIn("event.preventDefault()", events[0]["data"]["code"])
+                self.assertIn("Downloading ${state.names[match[1]]}", events[0]["data"]["code"])
+                self.assertIn("Download started:", events[0]["data"]["code"])
+                self.assertNotIn("window.open", events[0]["data"]["code"])
 
                 preview_fails = True
                 with_preview_failure = asyncio.run(tool.convert_attached_document_to_latex(**kwargs))
