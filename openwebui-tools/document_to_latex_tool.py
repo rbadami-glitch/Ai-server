@@ -186,54 +186,76 @@ class Tools:
                 if len(data) > 25 * 1024 * 1024:
                     return "The converted package exceeds the 25 MB limit. No download was created."
                 report = _verify_zip(data)
+                with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                    preview_data = archive.read("preview.pdf")
 
-                stage = "file_upload"
-                filename = f"latex-draft-{uuid.uuid4().hex[:12]}.zip"
-                upload = UploadFile(
-                    file=io.BytesIO(data), filename=filename,
-                    headers=Headers({"content-type": "application/zip"}),
-                )
-                file_item = await upload_file_handler(
-                    __request__, file=upload, metadata={}, process=False, user=user,
-                )
-                stage = "stored_file_verification"
-                saved = await Files.get_file_by_id(file_item.id)
-                if saved is None or saved.user_id != user.id or not saved.path:
-                    return "The converted file could not be verified. No download is available."
-                saved_path = Path(await asyncio.to_thread(Storage.get_file, saved.path))
-                saved_data = await asyncio.to_thread(saved_path.read_bytes)
-                _verify_zip(saved_data)
-                if hashlib.sha256(saved_data).digest() != hashlib.sha256(data).digest():
-                    return "The converted file failed storage verification. No download is available."
+                async def store_verified(payload: bytes, filename: str, mime: str):
+                    nonlocal stage
+                    stage = "file_upload"
+                    upload = UploadFile(
+                        file=io.BytesIO(payload), filename=filename,
+                        headers=Headers({"content-type": mime}),
+                    )
+                    file_item = await upload_file_handler(
+                        __request__, file=upload, metadata={}, process=False, user=user,
+                    )
+                    stage = "stored_file_verification"
+                    saved = await Files.get_file_by_id(file_item.id)
+                    if saved is None or saved.user_id != user.id or not saved.path:
+                        raise ValueError("Stored file ownership could not be verified")
+                    saved_path = Path(await asyncio.to_thread(Storage.get_file, saved.path))
+                    saved_data = await asyncio.to_thread(saved_path.read_bytes)
+                    if hashlib.sha256(saved_data).digest() != hashlib.sha256(payload).digest():
+                        raise ValueError("Stored file bytes changed")
+                    if mime == "application/zip":
+                        _verify_zip(saved_data)
+                    elif not saved_data.startswith(b"%PDF-"):
+                        raise ValueError("Stored preview is not a PDF")
+                    return saved.id, f"/api/v1/files/{saved.id}/content?attachment=true"
 
-                url = f"/api/v1/files/{saved.id}/content?attachment=true"
+                project_name = f"latex-project-{uuid.uuid4().hex[:12]}.zip"
+                project_id, project_url = await store_verified(
+                    data, project_name, "application/zip")
+                files = [{"type": "file", "id": project_id, "name": project_name,
+                          "url": project_url}]
+                preview_url = None
+                try:
+                    preview_name = f"latex-preview-{uuid.uuid4().hex[:12]}.pdf"
+                    preview_id, preview_url = await store_verified(
+                        preview_data, preview_name, "application/pdf")
+                    files.append({"type": "file", "id": preview_id,
+                                  "name": preview_name, "url": preview_url})
+                except Exception:
+                    preview_url = None
                 if __event_emitter__ is not None:
                     try:
-                        await __event_emitter__({"type": "files", "data": {"files": [
-                            {"type": "file", "id": saved.id, "name": filename, "url": url}
-                        ]}})
+                        await __event_emitter__({"type": "files", "data": {"files": files}})
                     except Exception:
                         pass
+                downloads = (
+                    f"[Download preview PDF]({preview_url}) and "
+                    if preview_url else "Preview PDF is inside the ZIP. "
+                ) + f"[Download LaTeX project ZIP]({project_url}). "
                 if report["status"] == "reflowing_word_draft_requires_human_review":
                     geometry_notice = (
                         " Page size or orientation changed in the preview."
                         if not report["page_geometry_match"] else ""
                     )
                     return (
-                        f"Editable LaTeX draft created: [Download {filename}]({url}). "
-                        "Open preview.pdf and compare every page with the source. "
+                        "Editable LaTeX draft created: " + downloads +
+                        "Compare every preview page with the source. "
                         "Text coverage passed, but the original appearance was not verified."
                         + geometry_notice
                     )
                 if report["status"] == "ocr_text_draft_requires_human_review":
                     return (
-                        f"OCR text draft created: [Download {filename}]({url}). "
+                        "OCR text draft created: " + downloads +
                         "The recognized words and formatting are unverified. "
                         "Compare every page with the uploaded PDF before editing or using it."
                     )
                 return (
-                    f"Fixed-layout LaTeX draft created: [Download {filename}]({url}). "
-                    "Open preview.pdf and inspect every page. Text is editable but longer "
+                    "Fixed-layout LaTeX draft created: " + downloads +
+                    "Inspect every preview page. Text is editable but longer "
                     "changes do not reflow; this is not a fully semantic template."
                 )
         except Exception as error:

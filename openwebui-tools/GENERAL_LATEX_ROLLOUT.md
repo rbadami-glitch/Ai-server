@@ -16,6 +16,8 @@ The existing visual route passed a synthetic DOC, synthetic PDF, and one private
 
 A synthetic scanned PDF was recognized locally using PyMuPDF and a separately supplied offline English Tesseract language file. The OCR draft rendered with the expected text, but OCR accuracy and layout remain unverified. The language file is not in this public source repository. The server must obtain and verify it separately before an OCR trial.
 
+The Tool now stores a verified project ZIP and separately attempts a direct preview-PDF upload. If preview storage fails, the verified project ZIP remains available and contains the preview. Both downloads are checked against the requesting user's ownership before being returned.
+
 ## Required gates before shared-model rollout
 
 1. Build synthetic evaluation documents for short and long DOC/DOCX, mixed orientation, headings, lists, merged/nested tables, images, headers/footers, non-ASCII text, and malformed/oversized files. Include selectable and scanned PDFs.

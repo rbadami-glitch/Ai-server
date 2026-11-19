@@ -120,13 +120,17 @@ class DocumentConversionToolTests(unittest.TestCase):
             source_path = root / "source.pdf"
             source_path.write_bytes(b"%PDF-1.7\n")
             saved_path = root / "saved.zip"
+            preview_path = root / "preview.pdf"
             selected = str(uuid.uuid4())
             saved_id = str(uuid.uuid4())
+            preview_id = str(uuid.uuid4())
             user = types.SimpleNamespace(id="user")
             source = types.SimpleNamespace(filename="source.pdf", path="source-key")
             saved = types.SimpleNamespace(id=saved_id, user_id="user", path="saved-key")
+            saved_preview = types.SimpleNamespace(id=preview_id, user_id="user", path="preview-key")
             calls = {"worker": 0, "upload": 0}
             owner_allowed = True
+            preview_fails = False
 
             class FakeFiles:
                 @staticmethod
@@ -135,7 +139,7 @@ class DocumentConversionToolTests(unittest.TestCase):
 
                 @staticmethod
                 async def get_file_by_id(file_id):
-                    return saved if file_id == saved_id else None
+                    return {saved_id: saved, preview_id: saved_preview}.get(file_id)
 
             class FakeUsers:
                 @staticmethod
@@ -145,14 +149,21 @@ class DocumentConversionToolTests(unittest.TestCase):
             class FakeStorage:
                 @staticmethod
                 def get_file(key):
-                    return str({"source-key": source_path, "saved-key": saved_path}[key])
+                    return str({"source-key": source_path, "saved-key": saved_path,
+                                "preview-key": preview_path}[key])
 
             class FakeUpload:
                 def __init__(self, file, filename, headers):
                     self.file = file
+                    self.filename = filename
 
             async def fake_upload(request, file, metadata, process, user):
                 calls["upload"] += 1
+                if file.filename.endswith(".pdf"):
+                    if preview_fails:
+                        raise RuntimeError("Preview storage failed")
+                    preview_path.write_bytes(file.file.getvalue())
+                    return types.SimpleNamespace(id=preview_id)
                 saved_path.write_bytes(file.file.getvalue())
                 return types.SimpleNamespace(id=saved_id)
 
@@ -200,8 +211,16 @@ class DocumentConversionToolTests(unittest.TestCase):
                 completed = asyncio.run(tool.convert_attached_document_to_latex(**kwargs))
                 self.assertIn("Download", completed)
                 self.assertIn("do not reflow", completed)
+                self.assertIn("preview PDF", completed)
+                self.assertIn("project ZIP", completed)
                 self.assertEqual(1, calls["worker"])
-                self.assertEqual(1, calls["upload"])
+                self.assertEqual(2, calls["upload"])
+
+                preview_fails = True
+                with_preview_failure = asyncio.run(tool.convert_attached_document_to_latex(**kwargs))
+                self.assertIn("Preview PDF is inside the ZIP", with_preview_failure)
+                self.assertIn("Download LaTeX project ZIP", with_preview_failure)
+                self.assertEqual(2, calls["worker"])
 
 
 if __name__ == "__main__":
