@@ -18,6 +18,29 @@ ESCAPES = {"\\": r"\textbackslash{}", "{": r"\{", "}": r"\}",
            "&": r"\&", "%": r"\%", "$": r"\$", "#": r"\#",
            "_": r"\_", "~": r"\textasciitilde{}", "^": r"\textasciicircum{}"}
 
+FONT_FAMILIES = (
+    ("timesnewroman", "Times New Roman"),
+    ("liberationsans", "Liberation Sans"),
+    ("liberationserif", "Liberation Serif"),
+    ("couriernew", "Courier New"),
+    ("calibri", "Calibri"),
+    ("cambria", "Cambria"),
+    ("verdana", "Verdana"),
+    ("georgia", "Georgia"),
+    ("tahoma", "Tahoma"),
+    ("arial", "Arial"),
+)
+
+
+def font_family(pdf_name: str) -> str:
+    """Map known PDF font names to safe, installed-family candidates."""
+    name = pdf_name.split("+", 1)[-1]
+    normalized = "".join(character for character in name.lower() if character.isalpha())
+    for prefix, family in FONT_FAMILIES:
+        if normalized.startswith(prefix):
+            return family
+    raise ValueError("Unsupported PDF font family")
+
 
 def escape(text: str) -> str:
     return "".join(ESCAPES.get(char, char) for char in text)
@@ -59,6 +82,7 @@ def run(source: Path, output: Path) -> dict:
         report["page_count"] = len(doc)
         width, height = doc[0].rect.width, doc[0].rect.height
         colors = collections.defaultdict(lambda: (0, 0, 0))
+        required_fonts = set()
         pages = []
         assets = {}
         for page in doc:
@@ -104,13 +128,18 @@ def run(source: Path, output: Path) -> dict:
                     if tuple(line.get("dir", (1.0, 0.0))) != (1.0, 0.0):
                         raise ValueError("Rotated text needs separate handling")
                     for span in line["spans"]:
+                        family = font_family(span["font"])
+                        required_fonts.add(family)
                         rgb = span["color"]
                         name = f"c{(rgb >> 16) & 255}_{(rgb >> 8) & 255}_{rgb & 255}"
                         colors[name] = ((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255)
-                        font = [r"\fontsize{" + f"{span['size']:.3f}bp" + "}{"
+                        font = [r"\fontspec{" + family + "}",
+                                r"\fontsize{" + f"{span['size']:.3f}bp" + "}{"
                                 + f"{span['size']:.3f}bp" + r"}\selectfont", r"\color{" + name + "}"]
                         if "Bold" in span["font"]:
                             font.append(r"\bfseries")
+                        if "Italic" in span["font"] or "Oblique" in span["font"]:
+                            font.append(r"\itshape")
                         chars = span["chars"]
                         first = None
                         for index in range(len(chars) + 1):
@@ -127,6 +156,7 @@ def run(source: Path, output: Path) -> dict:
                                 report["text_units"] += 1
                                 first = None
             pages.append(commands)
+        report["required_font_families"] = sorted(required_fonts)
         definitions = [r"\definecolor{" + name + "}{RGB}{" + ",".join(map(str, rgb)) + "}"
                        for name, rgb in sorted(colors.items()) if name != "black"]
         preamble = [r"\documentclass{article}", r"\usepackage{fontspec}",

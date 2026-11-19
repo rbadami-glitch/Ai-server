@@ -2,6 +2,8 @@
 
 This opt-in Workspace Tool accepts a DOC, DOCX, or selectable PDF attached to the current chat. It reads the user's original uploaded file, makes a fixed-layout LaTeX draft, renders it offline, compares the rendering with the source PDF, and uploads a ZIP only after verification. The ZIP contains `template.tex`, `preview.pdf`, images, and a report. Longer text edits can overlap because the layout does not reflow. This is a draft for visual review, not a fully semantic template or an OCR solution.
 
+The draft uses the PDF's supported font families, including Arial and Calibri, when they are installed on the worker host. The automated comparison blocks a download if font substitution changes the text or page appearance beyond the configured limits. The current worker accepts at most 20 pages and requires equal page sizes and selectable text on every page; these are explicit pilot limits.
+
 The normal chat retrieval path is unchanged. The tool does not call a model or a network service. Scanned PDFs, unsupported PDF drawing types, too many pages, excessive input size, missing dependencies, and failed comparisons return a clear failure without a download.
 
 ## Source and private asset

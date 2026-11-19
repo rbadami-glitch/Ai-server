@@ -160,6 +160,7 @@ def build(source: Path, output: Path, soffice: Path, tectonic: Path) -> dict:
             "page_count": draft_report["page_count"],
             "text_units": draft_report["text_units"],
             "images": draft_report["images"],
+            "required_font_families": draft_report["required_font_families"],
             "minimum_ink_overlap": min(page["ink_overlap"] for page in result["pages"]),
             "text_similarity_per_page": [page["text_similarity"] for page in result["pages"]],
         }
@@ -167,7 +168,8 @@ def build(source: Path, output: Path, soffice: Path, tectonic: Path) -> dict:
             "Fixed-layout LaTeX draft. Open preview.pdf before editing.\n"
             "Text is editable in template.tex, one word per positioned node. "
             "Longer edits do not reflow and can overlap.\n"
-            "Compile with XeLaTeX or Tectonic with Arial, fontspec, TikZ, graphicx, xcolor, and geometry.\n"
+            "Compile with XeLaTeX or Tectonic with Arial and the font families listed in "
+            "conversion-report.json, plus fontspec, TikZ, graphicx, xcolor, and geometry.\n"
             "A visual comparison passed, but this package still requires human review.\n"
         )
         with output.open("xb") as stream:
