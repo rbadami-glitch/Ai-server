@@ -289,6 +289,22 @@ def build(source: Path, output: Path, soffice: Path, tectonic: Path,
                     archive.write(semantic_dir / "editable.tex", "editable.tex")
                     archive.write(semantic_rendered, "editable-preview.pdf")
                     archive.writestr("semantic-report.json", json.dumps(semantic_report, indent=2))
+                    archive.writestr(
+                        "EDITABLE-GUIDE.txt",
+                        "Open editable-preview.pdf first. editable.tex is a separate "
+                        "Word-structure draft; its page appearance is not verified.\n"
+                        "Edit paragraphs after \\begin{document}. Longer text reflows. "
+                        "Edit the running header in the preamble if needed.\n"
+                        "To add a picture, copy a PNG or JPG into editable-media, then insert:\n"
+                        "\\begin{figure}[htbp]\n"
+                        "\\centering\n"
+                        "\\includegraphics[width=0.55\\linewidth]{editable-media/my-picture.png}\n"
+                        "\\caption{Sample process picture}\n"
+                        "\\end{figure}\n"
+                        "Replace my-picture.png with the approved image filename. "
+                        "Recompile with XeLaTeX or an installed Tectonic with its offline cache, "
+                        "then inspect every preview page.\n",
+                    )
                     for path in sorted(semantic_media.iterdir()):
                         if path.is_file():
                             archive.write(path, f"editable-media/{path.name}")

@@ -94,14 +94,17 @@ class Draft:
         size = width or r"0.8\linewidth"
         return r"\includegraphics[width=" + size + "]{" + name + "}"
 
-    def paragraph(self, node, rels):
+    def paragraph(self, node, rels, *, running_part=False):
         parts = []
         for run in node.iter(W + "r"):
             value = "".join(escape(item.text or "") for item in run.iter(W + "t"))
+            if running_part:
+                value = re.sub(r"\s+", " ", value)
             if run.find(W + "tab") is not None:
                 value += " "
             for line_break in run.findall(W + "br"):
-                value += r"\clearpage" if attr(line_break, "type") == "page" else r"\\"
+                value += (r"\\" if running_part or attr(line_break, "type") != "page"
+                          else r"\clearpage")
             props = run.find(W + "rPr")
             if value and props is not None:
                 if props.find(W + "b") is not None:
@@ -129,6 +132,8 @@ class Draft:
         props = node.find(W + "pPr")
         style_id = attr(props.find(W + "pStyle"), "val") if props is not None else None
         style = self.styles.get(style_id, (style_id or "").lower())
+        if running_part:
+            return content
         if re.match(r"heading\s*1", style):
             return r"\section*{" + content + "}"
         if re.match(r"heading\s*2", style):
@@ -178,7 +183,8 @@ class Draft:
 
     def part_text(self, part):
         rels = self.relationships(part)
-        return " ".join(filter(None, (self.paragraph(p, rels) for p in self.xml(part).iter(W + "p"))))
+        return " ".join(filter(None, (self.paragraph(p, rels, running_part=True)
+                                      for p in self.xml(part).iter(W + "p"))))
 
     def build(self):
         try:
@@ -222,10 +228,21 @@ class Draft:
                 preamble.append(r"\geometry{" + layout + "}")
             preamble.extend([r"\pagestyle{fancy}", r"\fancyhf{}"])
             if header:
-                preamble.append(r"\fancyhead[L]{\parbox{\textwidth}{" + header + "}}")
+                header_height = "1.6in" if r"\includegraphics" in header else "0.9in"
+                preamble.extend([
+                    r"\setlength{\headheight}{" + header_height + "}",
+                    r"\geometry{top=\dimexpr\headheight+0.35in\relax,headsep=0.1in}",
+                    r"\fancyhead[L]{\parbox{\textwidth}{\small " + header + "}}",
+                ])
+                self.warnings.add("Running header content is flattened and needs visual review.")
             if footer:
                 preamble.append(r"\fancyfoot[C]{\parbox{\textwidth}{" + footer + "}}")
-            tex = "\n".join(preamble + [r"\begin{document}", "\n\n".join(blocks), r"\end{document}", ""])
+            tex = "\n".join([
+                "% Editable Word-structure draft. Review the rendered preview before use.",
+                "% Body text below can reflow; edit the running header above separately.",
+                *preamble,
+                r"\begin{document}", "\n\n".join(blocks), r"\end{document}", "",
+            ])
             report = {"status": "draft_requires_visual_review", "body_blocks": len(blocks),
                       "media_files": len(self.media), "source_media_files": len(source_media),
                       "section_count": len(sections),
