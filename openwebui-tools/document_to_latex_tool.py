@@ -269,7 +269,12 @@ class Tools:
                     "the source before using it. "
                     if isinstance(editable, dict)
                     and editable.get("status") == "reflowing_draft_requires_human_review"
-                    else "No reviewed reflowing version was produced. "
+                    else (
+                        "The reflowing draft was withheld because its rendered text overlaps. "
+                        if isinstance(editable, dict)
+                        and editable.get("reason") == "editable_text_overlap"
+                        else "No reviewed reflowing version was produced. "
+                    )
                 )
                 return (
                     "Fixed-layout LaTeX draft created: " + downloads +

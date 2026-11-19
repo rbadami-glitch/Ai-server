@@ -25,6 +25,7 @@ import pymupdf
 
 from pdf_to_latex_layout import run as draft_from_pdf
 from ocr_to_latex import convert as ocr_text_from_pdf
+from pdf_text_quality import text_collision_counts
 from word_to_latex import Draft as WordDraft
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -216,6 +217,9 @@ def build(source: Path, output: Path, soffice: Path, tectonic: Path,
                 with pymupdf.open(semantic_rendered) as preview:
                     if not preview or not any(page.get_text().strip() for page in preview):
                         raise ConversionError("semantic_pdf_empty", "semantic_render")
+                    semantic_report["text_collisions_per_page"] = text_collision_counts(preview)
+                    if any(semantic_report["text_collisions_per_page"]):
+                        raise ConversionError("editable_text_overlap", "semantic_compare")
                     semantic_report["preview_pages"] = len(preview)
                     with pymupdf.open(reference) as reference_preview:
                         reference_tokens = collections.Counter(re.findall(
@@ -346,6 +350,9 @@ def build_editable_fallback(source: Path, output: Path, soffice: Path, tectonic:
         if not rendered.is_file():
             raise ConversionError("rendered_pdf_missing", "render")
         with pymupdf.open(reference) as original, pymupdf.open(rendered) as candidate:
+            collisions = text_collision_counts(candidate)
+            if any(collisions):
+                raise ConversionError("editable_text_overlap", "compare")
             source_sizes = [(round(page.rect.width), round(page.rect.height))
                             for page in original]
             preview_sizes = [(round(page.rect.width), round(page.rect.height))
@@ -365,6 +372,7 @@ def build_editable_fallback(source: Path, output: Path, soffice: Path, tectonic:
                 "text_coverage": round(coverage, 3),
                 "visual_fidelity_verified": False,
                 "page_geometry_match": source_sizes == preview_sizes,
+                "text_collisions_per_page": collisions,
                 "warnings": word_report["warnings"],
             }
         with output.open("xb") as stream, zipfile.ZipFile(
