@@ -238,6 +238,7 @@ class DocumentConversionToolTests(unittest.TestCase):
                 self.assertIn("event.preventDefault()", events[0]["data"]["code"])
                 self.assertIn("response.body.getReader()", events[0]["data"]["code"])
                 self.assertIn("document.createElement('progress')", events[0]["data"]["code"])
+                self.assertIn("[data-sonner-toaster]", events[0]["data"]["code"])
                 self.assertIn("Check Downloads.", events[0]["data"]["code"])
                 self.assertNotIn("window.open", events[0]["data"]["code"])
 

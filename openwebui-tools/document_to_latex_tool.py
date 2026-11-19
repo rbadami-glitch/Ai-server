@@ -93,20 +93,31 @@ if (!state.installed) {
       notice.id = 'verified-latex-download-status';
       notice.setAttribute('role', 'status');
       notice.setAttribute('aria-live', 'polite');
-      Object.assign(notice.style, {
-        position: 'fixed', right: '1rem', bottom: '1rem', zIndex: '9999',
-        padding: '0.75rem 1rem', borderRadius: '0.75rem',
-        background: '#1f2937', color: '#ffffff', boxShadow: '0 4px 12px #0004'
-      });
       document.body.appendChild(notice);
     }
+    const toaster = document.querySelector('[data-sonner-toaster]');
+    const theme = toaster ? getComputedStyle(toaster) : null;
+    const dark = document.documentElement.classList.contains('dark');
+    const color = (variable, fallback) =>
+      theme?.getPropertyValue(variable).trim() || fallback;
+    Object.assign(notice.style, {
+      position: 'fixed', right: '1rem', top: '1rem', zIndex: '9999',
+      maxWidth: 'min(26rem, calc(100vw - 2rem))',
+      padding: '0.875rem 1rem', borderRadius: '0.75rem',
+      fontFamily: 'inherit', fontSize: '0.875rem', lineHeight: '1.25rem',
+      backgroundColor: color('--normal-bg', dark ? '#1f2937' : '#ffffff'),
+      color: color('--normal-text', dark ? '#f9fafb' : '#111827'),
+      border: `1px solid ${color('--normal-border', dark ? '#374151' : '#e5e7eb')}`,
+      boxShadow: '0 4px 12px #0002'
+    });
     notice.textContent = message;
     if (hold) {
       const progress = document.createElement('progress');
       progress.max = 100;
       if (percent !== null) progress.value = percent;
       Object.assign(progress.style, {
-        display: 'block', width: '100%%', height: '0.5rem', marginTop: '0.5rem'
+        display: 'block', width: '100%%', height: '0.5rem', marginTop: '0.5rem',
+        accentColor: '#3b82f6'
       });
       notice.appendChild(progress);
     }
