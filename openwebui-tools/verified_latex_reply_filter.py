@@ -56,6 +56,25 @@ def _verified_tool_result(output):
     return None
 
 
+def _source_tool_result(sources):
+    """Open WebUI's legacy tool path stores the result as a citation source."""
+    if not isinstance(sources, list):
+        return None
+    for item in reversed(sources):
+        if not isinstance(item, dict) or item.get("tool_result") is not True:
+            continue
+        source = item.get("source")
+        name = source.get("name") if isinstance(source, dict) else None
+        if not isinstance(name, str) or name.split("/")[-1] != TOOL_NAME:
+            continue
+        documents = item.get("document")
+        if isinstance(documents, list) and len(documents) == 1 and isinstance(documents[0], str):
+            result = documents[0].strip()
+            if result:
+                return result
+    return None
+
+
 class Filter:
     async def outlet(self, body: dict) -> dict:
         messages = body.get("messages") if isinstance(body, dict) else None
@@ -65,12 +84,13 @@ class Filter:
         if not isinstance(message, dict) or message.get("role") != "assistant":
             return body
         output = message.get("output")
-        result = _verified_tool_result(output)
+        result = _verified_tool_result(output) or _source_tool_result(message.get("sources"))
         if result is None:
             return body
 
         # Keep function calls and outputs, including their verified file cards.
         # Discard the model's answer and insert the exact tool response.
+        output = output if isinstance(output, list) else []
         final_message = next(
             (item for item in reversed(output)
              if isinstance(item, dict)

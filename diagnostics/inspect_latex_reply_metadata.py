@@ -31,13 +31,24 @@ def parse_output(raw):
     return raw if isinstance(raw, list) else None
 
 
-def summarize_output(output, guard):
+def summarize_output(output, sources, guard):
+    source_items = sources if isinstance(sources, list) else []
+    source_tool_names = [
+        item["source"].get("name", "") for item in source_items
+        if isinstance(item, dict) and isinstance(item.get("source"), dict)
+        and item.get("tool_result") is True
+    ]
+    summary = {
+        "source_count": len(source_items),
+        "source_tool_names": source_tool_names,
+        "source_guard_matches": guard._source_tool_result(sources) is not None,
+    }
     if output is None:
-        return {"output_list": False}
+        return {"output_list": False, **summary}
     calls = [item for item in output if isinstance(item, dict) and item.get("type") == "function_call"]
     results = [item for item in output if isinstance(item, dict) and item.get("type") == "function_call_output"]
     names = [str(item.get("name", "")) for item in calls]
-    return {
+    return {**summary,
         "output_list": True,
         "item_types": [str(item.get("type", "")) for item in output if isinstance(item, dict)],
         "call_names": names,
@@ -67,15 +78,23 @@ def main():
     with sqlite3.connect(uri, uri=True, timeout=5) as db:
         db.execute("PRAGMA query_only=ON")
         columns = {row[1] for row in db.execute("PRAGMA table_info(chat_message)")}
-        if not {"role", "model_id", "created_at", "output"} <= columns:
+        if not {"role", "model_id", "created_at", "output", "sources"} <= columns:
             print(json.dumps({"status": "chat_message_columns_missing"}))
             return
         rows = db.execute(
-            "SELECT output FROM chat_message WHERE role='assistant' AND model_id=? "
+            "SELECT output, sources FROM chat_message WHERE role='assistant' AND model_id=? "
             "ORDER BY created_at DESC LIMIT ?", (args.model, args.limit)
         ).fetchall()
+    def parse_sources(raw):
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except ValueError:
+                return None
+        return raw if isinstance(raw, list) else None
     print(json.dumps({"status": "read_only", "matching_replies": len(rows),
-                      "replies": [summarize_output(parse_output(row[0]), guard) for row in rows]},
+                      "replies": [summarize_output(parse_output(row[0]), parse_sources(row[1]), guard)
+                                  for row in rows]},
                      separators=(",", ":")))
 
 

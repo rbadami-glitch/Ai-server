@@ -50,6 +50,27 @@ class VerifiedLatexReplyFilterTests(unittest.TestCase):
         result = asyncio.run(filter_module.Filter().outlet(body))
         self.assertEqual(result["messages"][-1]["content"], "Conversion failed. No file was created.")
 
+    def test_replaces_legacy_tool_citation_result(self):
+        verified = "Fixed-layout LaTeX draft created: [Download ZIP](/verified)"
+        body = {"messages": [{
+            "role": "assistant", "content": "Here is invented LaTeX code",
+            "sources": [{"source": {"name": "private-tool/convert_attached_document_to_latex"},
+                         "document": [verified], "tool_result": True}],
+            "output": [{"type": "reasoning", "content": []},
+                       {"type": "message", "role": "assistant",
+                        "content": [{"type": "output_text", "text": "Here is invented LaTeX code"}]}],
+        }]}
+        result = asyncio.run(filter_module.Filter().outlet(body))
+        self.assertEqual(result["messages"][-1]["content"], verified)
+        self.assertEqual(result["messages"][-1]["output"][-1]["content"][0]["text"], verified)
+
+    def test_ordinary_retrieval_citation_cannot_replace_reply(self):
+        body = {"messages": [{"role": "assistant", "content": "Normal answer",
+                              "sources": [{"source": {"name": "uploaded-document"},
+                                           "document": ["Document text"], "tool_result": False}]}]}
+        self.assertEqual(asyncio.run(filter_module.Filter().outlet(body))["messages"][-1]["content"],
+                         "Normal answer")
+
 
 if __name__ == "__main__":
     unittest.main()
